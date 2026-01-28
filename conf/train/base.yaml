@@ -1,0 +1,6 @@
+epochs: 10
+batch_size: 32
+patience: 3
+num_workers: 4
+use_amp: false
+gradient_clip: 0.0

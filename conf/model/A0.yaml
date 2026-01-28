@@ -1,0 +1,16 @@
+variant: A0
+d_model: 512
+n_heads: 8
+e_layers: 2
+d_ff: 2048
+dropout: 0.1
+activation: gelu
+use_norm: true
+meta:
+  mode: none
+  source: none
+patch:
+  enabled: false
+  patch_len: 0
+  mode: none
+  local_win: 0

@@ -1,0 +1,4 @@
+device: cuda
+seed: 0
+deterministic: true
+precision: fp32

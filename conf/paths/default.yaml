@@ -1,0 +1,5 @@
+artifacts_root: ./artifacts
+runs_dir: ${paths.artifacts_root}/runs
+ops_dir: ${paths.artifacts_root}/ops
+cmp_dir: ${paths.artifacts_root}/cmp
+agg_dir: ${paths.artifacts_root}/agg

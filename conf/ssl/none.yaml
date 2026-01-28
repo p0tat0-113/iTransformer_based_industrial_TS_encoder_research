@@ -1,0 +1,4 @@
+enabled: false
+type: none
+mask_ratio: 0.0
+pretrain_epochs: 0

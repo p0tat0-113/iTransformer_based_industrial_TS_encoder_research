@@ -1,0 +1,21 @@
+defaults:
+  - data: ETT
+  - model: A0
+  - ssl: none
+  - train: base
+  - optim: adam
+  - eval: base
+  - analysis: none
+  - runtime: gpu
+  - paths: default
+  - ids: default
+  - _self_
+
+run:
+  code: A-TR-1
+  hparams_tag: base
+  id: ${ids.run_id}
+
+hydra:
+  run:
+    dir: ${paths.artifacts_root}/_hydra/${now:%Y-%m-%d}/${now:%H-%M-%S}
