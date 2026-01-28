@@ -22,9 +22,15 @@
   - 메모: `analysis.py`는 패키지 `analysis/`와 충돌을 피하기 위해 `analysis_entry.py`로 사용 중
 
 ### M2. iTransformer 핵심 이관
-- [ ] iTransformer 기본 모델 이관
-- [ ] A0/A1/A2 (메타 결합) 변형 구현
-- [ ] 데이터 로더 이관 (전체 데이터셋 유지)
+- [x] iTransformer 기본 모델 이관
+- [x] A0/A1/A2 (메타 결합) 변형 구현
+- [x] 센서 메타데이터 스키마/저장 포맷 확정 (dataset별)
+- [x] 메타 텍스트 직렬화 + UNK 템플릿 규칙 정의
+- [x] 메타 임베딩 파이프라인(외부 API + 캐시 + projection) 설계/구현
+  - 메모: Gemini 클라이언트 구현 및 캐시 빌더/검증기 추가 완료
+- [ ] 데이터셋별 메타데이터 매핑 규칙(수동 매핑) 적용
+  - 메모: metadata.jsonl 템플릿 생성 완료, 실제 수동 매핑은 작성 필요
+- [x] 데이터 로더 이관 (전체 데이터셋 유지)
 
 ### M3. SSL 최소 기능 구현
 - [ ] Var-MAE 최소 버전 (variate masking + MSE 복원)
@@ -105,6 +111,28 @@
 - 기존 코드 삭제는 M2~M4 안정화 후에 수행
 - SSL은 최소 기능부터 시작하고, 추가 목표는 별도 마일스톤으로 확장
 - 데이터셋 유지로 인해 config가 방대해질 수 있음 → dataset별 default config 분리
+- 외부 API(메타 임베딩) 비용/속도 이슈 → 사전 임베딩 + 캐시 필수
+- 메타데이터 스키마가 데이터셋마다 상이 → 템플릿/매핑 기반의 유연한 로딩 필요
 
 ## 8. 다음 작업 (Next Step)
-- M2: iTransformer 기본 모델 + 데이터 로더 이관 시작
+- M2: 메타데이터 수동 매핑 작성 + Gemini 임베딩 빌더 완성
+
+## 9. 실험군 A 메타데이터 파이프라인(갱신)
+- 저장 포맷: `dataset/<name>/metadata.jsonl` (수동 매핑 파일 기반)
+- 메타데이터 스키마는 **dataset마다 상이**함 → 고정 필드 가정 금지
+- 텍스트 직렬화는 **템플릿 기반**으로 처리 (dataset별 설정)
+  - 예: `"{type}; {unit}; {quality}; {sr_tag}"` 혹은 `"{json}"` 등
+  - 미존재 필드는 `UNK_<field>` 혹은 `UNK`로 치환
+- 템플릿/매핑 설정 위치: `conf/metadata/<dataset>.yaml`
+- `sensor_id`는 데이터 컬럼명과 **직접 매칭**
+- 메타 임베딩 생성
+  - 모델: `gemini-embedding-001` (3072-dim)
+  - API key: 환경변수 사용
+  - **사전 임베딩 + 캐시** 방식 (실험 중 API 호출 없음)
+- 캐시 포맷: `.pt` 또는 `.npy` + jsonl 인덱싱
+- 현 상태 메모
+  - metadata.jsonl 템플릿 파일 생성 완료 (각 dataset 폴더)
+  - `conf/metadata/<dataset>.yaml` 기본 템플릿 추가
+  - 메타 캐시 빌더 CLI 스켈레톤 추가 (`itransformer.tools.build_metadata_cache`)
+  - 메타데이터 검증 CLI 추가 (`itransformer.tools.validate_metadata`)
+  - Gemini 임베딩 클라이언트 구현 완료 + 테스트 성공 (ETTh1 캐시 생성)

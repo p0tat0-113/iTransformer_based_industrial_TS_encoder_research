@@ -1,0 +1,3 @@
+dump_texts: false
+strict: false
+texts_path: ${paths.artifacts_root}/metadata/texts_${data.name}_${data.data_path}.jsonl

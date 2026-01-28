@@ -1,0 +1,17 @@
+enabled: ${model.meta.enabled}
+path: ${data.root_path}/metadata.jsonl
+template: "{json}"
+unk_token: "UNK"
+unk_template: "UNK_{field}"
+
+embedding:
+  provider: gemini
+  model: gemini-embedding-001
+  dim: 3072
+  api_key_env: GEMINI_API_KEY
+  batch_size: 32
+
+cache:
+  enabled: true
+  path: ${paths.artifacts_root}/metadata/${data.name}_${data.data_path}.pt
+  build: false

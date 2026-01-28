@@ -1,4 +1,4 @@
-variant: A0
+variant: A1Cat
 d_model: 512
 n_heads: 8
 e_layers: 2
@@ -7,9 +7,9 @@ dropout: 0.1
 activation: gelu
 use_norm: true
 meta:
-  enabled: false
-  mode: none
-  source: none
+  enabled: true
+  mode: concat
+  source: real
   proj: linear
   mlp_hidden: 512
 patch:

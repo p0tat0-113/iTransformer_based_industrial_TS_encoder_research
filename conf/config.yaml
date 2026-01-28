@@ -1,6 +1,8 @@
 defaults:
   - data: ETT
   - model: A0
+  - metadata: default
+  - metadata_builder: default
   - ssl: none
   - train: base
   - optim: adam
