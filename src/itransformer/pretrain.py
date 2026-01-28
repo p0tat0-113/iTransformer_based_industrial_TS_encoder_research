@@ -46,7 +46,7 @@ def main(cfg) -> None:
         meta_emb = load_or_build_embeddings(cfg, sensor_ids)
         meta_emb = meta_emb.to(device)
 
-    if cfg.ssl.type == "var_mae":
+    if cfg.ssl.type == "var_mae" or getattr(cfg.model.patch, "mode", "none") == "none":
         model = VarMAE(cfg)
     elif cfg.ssl.type == "patch_mae":
         model = PatchMAE(cfg)

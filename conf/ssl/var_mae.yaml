@@ -1,0 +1,6 @@
+enabled: true
+type: var_mae
+mask_ratio: 0.25
+pretrain_epochs: 10
+patch_len: 0
+loss: mse

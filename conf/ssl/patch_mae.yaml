@@ -1,0 +1,8 @@
+enabled: true
+type: patch_mae
+mask_ratio: 0.25
+pretrain_epochs: 10
+patch_len: 16
+patch_mode: all   # options: all, same_time, local, mean_pool
+local_win: 1
+loss: mse
