@@ -1,0 +1,6 @@
+pandas==2.2.3
+scikit-learn==1.6.1
+numpy==1.26.4
+matplotlib==3.10.3
+torch==2.8.0a0+5228986c39.nv25.5
+reformer-pytorch==1.4.4
