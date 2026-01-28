@@ -33,8 +33,10 @@
 - [x] 데이터 로더 이관 (전체 데이터셋 유지)
 
 ### M3. SSL 최소 기능 구현
-- [ ] Var-MAE 최소 버전 (variate masking + MSE 복원)
-- [ ] Patch-MAE 최소 버전 (patch token masking + MSE 복원)
+- [x] Var-MAE 최소 버전 (variate masking + MSE 복원)
+- [x] Patch-MAE 최소 버전 (patch token masking + MSE 복원)
+  - 메모: `itransformer.pretrain` 엔트리포인트 추가, ETTh1에서 1 epoch 테스트 성공
+  - 메모: 경고 제거( pandas `apply` → `dt`, `loss.item` → `detach().item`, `utcnow` → `timezone.utc`)
 
 ### M4. 평가/진단/분석
 - [ ] Scenario eval (S1/S2/S3)
