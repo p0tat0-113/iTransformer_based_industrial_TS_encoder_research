@@ -31,23 +31,43 @@
 - [ ] 데이터셋별 메타데이터 매핑 규칙(수동 매핑) 적용
   - 메모: metadata.jsonl 템플릿 생성 완료, 실제 수동 매핑은 작성 필요
 - [x] 데이터 로더 이관 (전체 데이터셋 유지)
+- [ ] 실험군 B: P0~P4 구조 구현 (P1~P4 포함)
 
 ### M3. SSL 최소 기능 구현
 - [x] Var-MAE 최소 버전 (variate masking + MSE 복원)
 - [x] Patch-MAE 최소 버전 (patch token masking + MSE 복원)
   - 메모: `itransformer.pretrain` 엔트리포인트 추가, ETTh1에서 1 epoch 테스트 성공
   - 메모: 경고 제거( pandas `apply` → `dt`, `loss.item` → `detach().item`, `utcnow` → `timezone.utc`)
+- [ ] C-DS: SL/FT/LP 학습 로직 구현
+  - FT: SSL checkpoint 로드 후 전체 미세조정
+  - LP: encoder+embedding freeze, pred_len projector만 학습
+  - Patch-MAE downstream은 patch 기반 유지
 
 ### M4. 평가/진단/분석
 - [ ] Scenario eval (S1/S2/S3)
+  - S1: 입력에 Gaussian noise 추가 (레벨 sweep)
+  - S2: 데이터 변형만 적용, sr_tag 미사용
+  - S3: 입력에 scale + bias drift (레벨 sweep)
 - [ ] Diagnostics (T1/T2/T3)
+  - T1: 센서↔메타 매칭 셔플 (A 실험군 전용)
+  - T2: metadata missing sweep (A 실험군 전용)
+  - T3: A1 vs A2 비교 (결합 방식별 CMP 생성)
 - [ ] Robustness (R1/R2)
-- [ ] 분석 (CKA, attention map, trade-off)
+  - R1: 센서 raw 측정값 부분 결측 (값 마스킹)
+  - R2: 센서 채널 자체 결측 (채널 drop/mask)
+- [ ] C-RB: SSL downstream 모델 기준 R1/R2 curve 생성
+- [ ] 분석 (F1~F5)
+  - F1: 비용(시간/메모리/파라미터) 집계
+  - F2: 성능-비용 trade-off
+  - F4: CKA (첫/마지막 블록)
+  - F5: attention map
 
 ### M5. 오케스트레이터
 - [ ] exp_plan.yaml 스펙 → Run/Op/CMP/AGG 생성
 - [ ] DAG 기반 실행 (train → eval → analysis)
 - [ ] resume/skip 지원
+- [ ] CMP/AGG 집계 로직 구현 (A-DIAG-3 등)
+- [ ] patch_len sweep 실행/로그 구조 구현 (B 실험군)
 
 ### M6. 정리
 - [ ] legacy 코드 삭제
@@ -115,9 +135,10 @@
 - 데이터셋 유지로 인해 config가 방대해질 수 있음 → dataset별 default config 분리
 - 외부 API(메타 임베딩) 비용/속도 이슈 → 사전 임베딩 + 캐시 필수
 - 메타데이터 스키마가 데이터셋마다 상이 → 템플릿/매핑 기반의 유연한 로딩 필요
+- 실험군 B/C는 **메타데이터 미사용**, A에서만 사용
 
 ## 8. 다음 작업 (Next Step)
-- M2: 메타데이터 수동 매핑 작성 + Gemini 임베딩 빌더 완성
+- M4: 평가/진단/강건성/분석 파이프라인 구현
 
 ## 9. 실험군 A 메타데이터 파이프라인(갱신)
 - 저장 포맷: `dataset/<name>/metadata.jsonl` (수동 매핑 파일 기반)
@@ -131,10 +152,27 @@
   - 모델: `gemini-embedding-001` (3072-dim)
   - API key: 환경변수 사용
   - **사전 임베딩 + 캐시** 방식 (실험 중 API 호출 없음)
-- 캐시 포맷: `.pt` 또는 `.npy` + jsonl 인덱싱
+  - 캐시 포맷: `.pt` 또는 `.npy` + jsonl 인덱싱
 - 현 상태 메모
   - metadata.jsonl 템플릿 파일 생성 완료 (각 dataset 폴더)
   - `conf/metadata/<dataset>.yaml` 기본 템플릿 추가
   - 메타 캐시 빌더 CLI 스켈레톤 추가 (`itransformer.tools.build_metadata_cache`)
   - 메타데이터 검증 CLI 추가 (`itransformer.tools.validate_metadata`)
   - Gemini 임베딩 클라이언트 구현 완료 + 테스트 성공 (ETTh1 캐시 생성)
+
+## 10. 간과/미구현 항목 정리 (exp_plan 기준)
+### 실험군 A (메타 임베딩)
+- S1~S3 시나리오 평가 코드 미구현 → M4에 체크리스트 반영
+- T1~T3 진단 코드 미구현 → M4에 체크리스트 반영
+- CMP/AGG 집계 로직 미구현 → M5에 체크리스트 반영
+
+### 실험군 B (패칭)
+- P0~P4 구조 구현 미완 (P1~P4 필요) → M2 확장 체크리스트 필요
+- patch_len sweep 실행/로그 구조 미구현 → M5 체크리스트 필요
+- F1/F2/F4/F5 분석 미구현 → M4 체크리스트 반영
+- B/C 실험군은 메타데이터 미사용
+
+### 실험군 C (SSL)
+- C-DS: SL/FT/LP 학습 로직 미구현 → M3 체크리스트 반영
+- C-RB: R1/R2 robustness curve 평가 미구현 → M4 체크리스트 반영
+- Patch-MAE downstream은 patch 기반 유지
