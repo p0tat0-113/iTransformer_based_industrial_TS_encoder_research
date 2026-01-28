@@ -38,10 +38,11 @@
 - [x] Patch-MAE 최소 버전 (patch token masking + MSE 복원)
   - 메모: `itransformer.pretrain` 엔트리포인트 추가, ETTh1에서 1 epoch 테스트 성공
   - 메모: 경고 제거( pandas `apply` → `dt`, `loss.item` → `detach().item`, `utcnow` → `timezone.utc`)
-- [ ] C-DS: SL/FT/LP 학습 로직 구현
+- [x] C-DS: SL/FT/LP 학습 로직 구현
   - FT: SSL checkpoint 로드 후 전체 미세조정
   - LP: encoder+embedding freeze, pred_len projector만 학습
   - Patch-MAE downstream은 patch 기반 유지
+  - 메모: `itransformer.downstream` 엔트리포인트 추가, SL/patch SL 테스트 성공
 
 ### M4. 평가/진단/분석
 - [ ] Scenario eval (S1/S2/S3)
