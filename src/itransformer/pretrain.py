@@ -71,12 +71,11 @@ def main(cfg) -> None:
 
     train_data, train_loader = data_provider(cfg, flag="train")
     _, val_loader = data_provider(cfg, flag="val")
-    sensor_ids = getattr(train_data, "sensor_ids", None)
-    if not sensor_ids:
-        raise ValueError("Dataset does not expose sensor_ids for metadata matching.")
-
     meta_emb = None
     if cfg.metadata.enabled:
+        sensor_ids = getattr(train_data, "sensor_ids", None)
+        if not sensor_ids:
+            raise ValueError("Dataset does not expose sensor_ids for metadata matching.")
         meta_emb = load_or_build_embeddings(cfg, sensor_ids)
         meta_emb = meta_emb.to(device)
 

@@ -1,0 +1,296 @@
+plan_id: B_full
+
+# B experiment plan (Var-MAE only, patch_len sweep, seed 0/1/2)
+# - SSL pretrain: Mix (ETTh1/ETTm1/Exchange/Weather interleaved)
+# - LP tuning/eval: ETTh1
+# - P4 local_win fixed to 2
+
+runs:
+  # -------------------------
+  # B-TR: SSL pretrain (P0, Mix)
+  # -------------------------
+  - id_template: "B-TR-1.{data}.P0.plnone.sd{seed}"
+    entry: pretrain
+    overrides:
+      - data=Mix
+      - model=P0
+      - ssl=var_mae
+      - ssl.mask_ratio=0.5
+      - ssl.pretrain_epochs=25
+      - train.patience=0
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - run.code=B-TR-1
+      - run.hparams_tag=plnone
+      - run.id={id}
+    sweep:
+      data: [Mix]
+      seed: [0, 1, 2]
+
+  # -------------------------
+  # B-TR: SSL pretrain (P1, Mix)
+  # -------------------------
+  - id_template: "B-TR-2.{data}.P1.pl{patch_len}.sd{seed}"
+    entry: pretrain
+    overrides:
+      - data=Mix
+      - model=P1
+      - ssl=var_mae
+      - ssl.mask_ratio=0.5
+      - ssl.pretrain_epochs=25
+      - train.patience=0
+      - model.patch.patch_len={patch_len}
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - run.code=B-TR-2
+      - run.hparams_tag=pl{patch_len}
+      - run.id={id}
+    sweep:
+      data: [Mix]
+      patch_len: [8, 16, 32]
+      seed: [0, 1, 2]
+
+  # -------------------------
+  # B-TR: SSL pretrain (P2, Mix)
+  # -------------------------
+  - id_template: "B-TR-3.{data}.P2.pl{patch_len}.sd{seed}"
+    entry: pretrain
+    overrides:
+      - data=Mix
+      - model=P2
+      - ssl=var_mae
+      - ssl.mask_ratio=0.5
+      - ssl.pretrain_epochs=25
+      - train.patience=0
+      - model.patch.patch_len={patch_len}
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - run.code=B-TR-3
+      - run.hparams_tag=pl{patch_len}
+      - run.id={id}
+    sweep:
+      data: [Mix]
+      patch_len: [8, 16, 32]
+      seed: [0, 1, 2]
+
+  # -------------------------
+  # B-TR: SSL pretrain (P3, Mix)
+  # -------------------------
+  - id_template: "B-TR-4.{data}.P3.pl{patch_len}.sd{seed}"
+    entry: pretrain
+    overrides:
+      - data=Mix
+      - model=P3
+      - ssl=var_mae
+      - ssl.mask_ratio=0.5
+      - ssl.pretrain_epochs=25
+      - train.patience=0
+      - model.patch.patch_len={patch_len}
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - run.code=B-TR-4
+      - run.hparams_tag=pl{patch_len}
+      - run.id={id}
+    sweep:
+      data: [Mix]
+      patch_len: [8, 16, 32]
+      seed: [0, 1, 2]
+
+  # -------------------------
+  # B-TR: SSL pretrain (P4, Mix, local_win=2)
+  # -------------------------
+  - id_template: "B-TR-5.{data}.P4.pl{patch_len}.sd{seed}"
+    entry: pretrain
+    overrides:
+      - data=Mix
+      - model=P4
+      - ssl=var_mae
+      - ssl.mask_ratio=0.5
+      - ssl.pretrain_epochs=25
+      - train.patience=0
+      - model.patch.patch_len={patch_len}
+      - model.patch.local_win=2
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - run.code=B-TR-5
+      - run.hparams_tag=pl{patch_len}
+      - run.id={id}
+    sweep:
+      data: [Mix]
+      patch_len: [8, 16, 32]
+      seed: [0, 1, 2]
+
+  # -------------------------
+  # B-DS: downstream LP (P0, Mix pretrain)
+  # -------------------------
+  - id_template: "B-DS-MIX.{data}.P0.plnone.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={data}
+      - model=P0
+      - train=downstream
+      - train.mode=lp
+      - train.epochs=10
+      - train.batch_size=32
+      - optim.lr=0.0001
+      - train.ssl_ckpt_path=./artifacts/runs/B-TR-1.Mix.P0.plnone.sd{seed}/pretrain_checkpoint.pt
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - run.code=B-DS-MIX
+      - run.hparams_tag=plnone
+      - run.id={id}
+    sweep:
+      data: [ETTh1]
+      seed: [0, 1, 2]
+
+  # -------------------------
+  # B-DS: downstream LP (P1, Mix pretrain)
+  # -------------------------
+  - id_template: "B-DS-MIX.{data}.P1.pl{patch_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={data}
+      - model=P1
+      - train=downstream
+      - train.mode=lp
+      - train.epochs=10
+      - train.batch_size=32
+      - optim.lr=0.0001
+      - model.patch.patch_len={patch_len}
+      - train.ssl_ckpt_path=./artifacts/runs/B-TR-2.Mix.P1.pl{patch_len}.sd{seed}/pretrain_checkpoint.pt
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - run.code=B-DS-MIX
+      - run.hparams_tag=pl{patch_len}
+      - run.id={id}
+    sweep:
+      data: [ETTh1]
+      patch_len: [8, 16, 32]
+      seed: [0, 1, 2]
+
+  # -------------------------
+  # B-DS: downstream LP (P2, Mix pretrain)
+  # -------------------------
+  - id_template: "B-DS-MIX.{data}.P2.pl{patch_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={data}
+      - model=P2
+      - train=downstream
+      - train.mode=lp
+      - train.epochs=10
+      - train.batch_size=32
+      - optim.lr=0.0001
+      - model.patch.patch_len={patch_len}
+      - train.ssl_ckpt_path=./artifacts/runs/B-TR-3.Mix.P2.pl{patch_len}.sd{seed}/pretrain_checkpoint.pt
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - run.code=B-DS-MIX
+      - run.hparams_tag=pl{patch_len}
+      - run.id={id}
+    sweep:
+      data: [ETTh1]
+      patch_len: [8, 16, 32]
+      seed: [0, 1, 2]
+
+  # -------------------------
+  # B-DS: downstream LP (P3, Mix pretrain)
+  # -------------------------
+  - id_template: "B-DS-MIX.{data}.P3.pl{patch_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={data}
+      - model=P3
+      - train=downstream
+      - train.mode=lp
+      - train.epochs=10
+      - train.batch_size=32
+      - optim.lr=0.0001
+      - model.patch.patch_len={patch_len}
+      - train.ssl_ckpt_path=./artifacts/runs/B-TR-4.Mix.P3.pl{patch_len}.sd{seed}/pretrain_checkpoint.pt
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - run.code=B-DS-MIX
+      - run.hparams_tag=pl{patch_len}
+      - run.id={id}
+    sweep:
+      data: [ETTh1]
+      patch_len: [8, 16, 32]
+      seed: [0, 1, 2]
+
+  # -------------------------
+  # B-DS: downstream LP (P4, Mix pretrain, local_win=2)
+  # -------------------------
+  - id_template: "B-DS-MIX.{data}.P4.pl{patch_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={data}
+      - model=P4
+      - train=downstream
+      - train.mode=lp
+      - train.epochs=10
+      - train.batch_size=32
+      - optim.lr=0.0001
+      - model.patch.patch_len={patch_len}
+      - model.patch.local_win=2
+      - train.ssl_ckpt_path=./artifacts/runs/B-TR-5.Mix.P4.pl{patch_len}.sd{seed}/pretrain_checkpoint.pt
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - run.code=B-DS-MIX
+      - run.hparams_tag=pl{patch_len}
+      - run.id={id}
+    sweep:
+      data: [ETTh1]
+      patch_len: [8, 16, 32]
+      seed: [0, 1, 2]
+
+ops: []
+cmps: []
+
+aggs:
+  # -------------------------
+  # B-EV-1: cost (Mix pretrain)
+  # -------------------------
+  - id_template: "AGG.{data}.B-EV-1__ON="
+    entry: analysis
+    overrides:
+      - data={data}
+      - analysis.code=B-EV-1
+      - analysis.run_code_prefixes=[B-TR]
+      - runtime.device=cuda
+    sweep:
+      data: [Mix]
+
+  # -------------------------
+  # B-EV-2: trade-off (Mix pretrain, run_code filtered)
+  # -------------------------
+  - id_template: "AGG.ETTh1.B-EV-2__ON=Mix"
+    entry: analysis
+    overrides:
+      - data=ETTh1
+      - analysis.code=B-EV-2
+      - analysis.run_codes=[B-DS-MIX]
+      - runtime.device=cuda
+
+  # -------------------------
+  # B-EV-4: CKA (Mix pretrain)
+  # -------------------------
+  - id_template: "AGG.{data}.B-EV-4__ON="
+    entry: analysis
+    overrides:
+      - data={data}
+      - analysis.code=B-EV-4
+      - analysis.run_code_prefixes=[B-TR]
+      - runtime.device=cuda
+    sweep:
+      data: [Mix]

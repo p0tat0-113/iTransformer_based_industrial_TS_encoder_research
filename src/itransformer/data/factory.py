@@ -8,6 +8,7 @@ from itransformer.data.datasets import (
     DatasetPEMS,
     DatasetPred,
 )
+from itransformer.data.mix import mix_data_provider
 
 
 def _select_dataset(name: str, data_path: str):
@@ -26,6 +27,9 @@ def _select_dataset(name: str, data_path: str):
 
 
 def data_provider(cfg, flag: str):
+    if getattr(cfg.data, "mix", None) and bool(getattr(cfg.data.mix, "enabled", False)):
+        return mix_data_provider(cfg, flag)
+
     data_cls = _select_dataset(cfg.data.name, cfg.data.data_path)
 
     if flag == "test":

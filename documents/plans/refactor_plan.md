@@ -171,6 +171,38 @@
 - [x] 문서화 (Quickstart + 실험 예시)
   - 메모: `/workspace/documents`에 상세 문서/튜토리얼 작성
 
+### M8. Mix Pretrain 지원 (패딩 없이 dataset 교차 학습)
+목표: **서로 다른 변수 수/특성을 가진 데이터셋을 패딩 없이 섞어 pretrain**한다.
+
+- [x] Mix 데이터 설정 추가
+  - `conf/data/Mix.yaml` (이름 확장 가능)
+  - `mix.enabled`, `mix.datasets`, `mix.sample_mode=balanced`
+  - seq_len/label_len/pred_len 동일성만 강제
+
+- [x] Mix 데이터로더 구현
+  - dataset별 DataLoader를 만들고 **배치 단위 interleave**
+  - 패딩 없이 **dataset별 배치 그대로 사용**
+  - sample_mode=balanced: dataset 균등 샘플
+  - `epoch_size` 또는 `min_len * num_datasets` 기본 정책
+
+- [x] data_provider 확장
+  - `cfg.data.mix.enabled=true`면 MixLoader 반환
+  - 일반 데이터셋 경로는 그대로 유지
+
+- [x] metadata 비활성 경로 정리
+  - Mix에서는 metadata 미사용 전제
+  - `metadata.enabled=false`일 때 sensor_ids 없어도 동작하도록 보정
+
+- [x] B_full.yaml 갱신
+  - pretrain 데이터셋을 `Mix`로 통합
+  - downstream은 ETTh1 유지, ckpt는 Mix pretrain 기준으로 로드
+  - agg(B-EV-1/4)은 data=Mix, B-EV-2는 run_code=B-DS-MIX로 필터
+
+- [ ] 스모크 테스트
+  - Mix + P0 + Var-MAE (1 epoch)
+  - Mix + P2 + Var-MAE (patch_len=8, local_win=2) 1 epoch
+  - Mix ckpt → ETTh1 LP 1 epoch
+
 ### M7. Var-MAE 리팩토링 (patch 모델 호환)
 목표: **Var‑MAE가 P0(무패치)와 P1~P4(패치 기반) 모두에서 동작**하도록 구조를 통합한다.
 
