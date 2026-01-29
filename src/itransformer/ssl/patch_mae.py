@@ -91,7 +91,7 @@ class PatchMAE(nn.Module):
             return self.meta_fuse(fused)
         return enc_out
 
-    def forward(self, x_enc, x_mark=None, meta_emb=None):
+    def forward(self, x_enc, x_mark=None, meta_emb=None, return_details: bool = False):
         if self.use_norm:
             means = x_enc.mean(1, keepdim=True).detach()
             x_enc = x_enc - means
@@ -134,5 +134,9 @@ class PatchMAE(nn.Module):
         denom = mask_f.sum() * n_vars
         if denom.item() == 0:
             denom = torch.tensor(1.0, device=x_enc.device)
-        loss = ((recon_tokens - patch_mean) ** 2 * mask_f).sum() / denom
+        mse = ((recon_tokens - patch_mean) ** 2 * mask_f).sum() / denom
+        mae = (torch.abs(recon_tokens - patch_mean) * mask_f).sum() / denom
+        loss = mse
+        if return_details:
+            return loss, mse, mae
         return loss

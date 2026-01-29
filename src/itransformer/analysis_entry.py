@@ -49,6 +49,30 @@ def _flatten_metrics(data, prefix=""):
     return flat
 
 
+def _extract_mse_mae(metrics: dict) -> dict:
+    if not metrics:
+        return {"mse": None, "mae": None}
+    if "eval" in metrics and isinstance(metrics["eval"], dict):
+        test = metrics["eval"].get("test")
+        if isinstance(test, dict) and "mse" in test and "mae" in test:
+            return {"mse": test.get("mse"), "mae": test.get("mae")}
+    if "val" in metrics and isinstance(metrics["val"], dict):
+        if "mse" in metrics["val"] and "mae" in metrics["val"]:
+            return {"mse": metrics["val"].get("mse"), "mae": metrics["val"].get("mae")}
+    if "mse" in metrics and "mae" in metrics:
+        return {"mse": metrics.get("mse"), "mae": metrics.get("mae")}
+    return {"mse": None, "mae": None}
+
+
+def _select_cfg_value(cfg_dict: dict, key_path: str):
+    cur = cfg_dict
+    for part in key_path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def main(cfg) -> None:
     analysis_code = cfg.analysis.code
@@ -181,6 +205,7 @@ def main(cfg) -> None:
     out_dir = None
     report_id = None
     status_state = "initialized"
+    run_ids = []
     if cfg.analysis.left and cfg.analysis.right:
         report_id = build_cmp_id(
             cfg.ids.cmp_id,
@@ -194,23 +219,27 @@ def main(cfg) -> None:
 
         left_dir = os.path.join(cfg.paths.runs_dir, cfg.analysis.left)
         right_dir = os.path.join(cfg.paths.runs_dir, cfg.analysis.right)
-        left_metrics, left_source = load_run_metrics(left_dir)
-        right_metrics, right_source = load_run_metrics(right_dir)
-        left_flat = _flatten_metrics(left_metrics)
-        right_flat = _flatten_metrics(right_metrics)
-        delta = {}
-        for key in sorted(set(left_flat) & set(right_flat)):
-            delta[key] = left_flat[key] - right_flat[key]
+        left_metrics, _ = load_run_metrics(left_dir)
+        right_metrics, _ = load_run_metrics(right_dir)
+        left_vals = _extract_mse_mae(left_metrics)
+        right_vals = _extract_mse_mae(right_metrics)
+        delta = {
+            "delta_mse": None,
+            "delta_mae": None,
+        }
+        if left_vals["mse"] is not None and right_vals["mse"] is not None:
+            delta["delta_mse"] = left_vals["mse"] - right_vals["mse"]
+        if left_vals["mae"] is not None and right_vals["mae"] is not None:
+            delta["delta_mae"] = left_vals["mae"] - right_vals["mae"]
         cmp = {
-            "left": {"run_id": cfg.analysis.left, "metrics": left_metrics, "source": left_source},
-            "right": {"run_id": cfg.analysis.right, "metrics": right_metrics, "source": right_source},
+            "left": {"run_id": cfg.analysis.left, **left_vals},
+            "right": {"run_id": cfg.analysis.right, **right_vals},
             "delta": delta,
         }
         with open(os.path.join(out_dir, "cmp.json"), "w", encoding="utf-8") as f:
             json.dump(cmp, f, indent=2)
         status_state = "completed"
     else:
-        run_ids = []
         if cfg.analysis.on:
             if isinstance(cfg.analysis.on, str):
                 run_ids = [r.strip() for r in cfg.analysis.on.split(",") if r.strip()]
@@ -229,6 +258,53 @@ def main(cfg) -> None:
     config_path = os.path.join(out_dir, "config.yaml")
     with open(config_path, "w", encoding="utf-8") as f:
         f.write(OmegaConf.to_yaml(cfg, resolve=True))
+
+    # AGG: build rows + agg if run_ids are provided
+    if run_ids:
+        group_by = list(getattr(cfg.analysis, "group_by", []) or [])
+        metric_keys = list(getattr(cfg.analysis, "metric_keys", []) or [])
+        rows = []
+        for run_id in run_ids:
+            run_dir = os.path.join(cfg.paths.runs_dir, run_id)
+            metrics, _ = load_run_metrics(run_dir)
+            flat = _flatten_metrics(metrics)
+            row_metrics = {k: flat.get(k) for k in metric_keys} if metric_keys else flat
+            row = {"run_id": run_id, "metrics": row_metrics}
+            # include grouping fields from run config
+            cfg_path = os.path.join(run_dir, "config.yaml")
+            if os.path.exists(cfg_path):
+                run_cfg = OmegaConf.to_container(OmegaConf.load(cfg_path), resolve=True)
+                for key in group_by:
+                    row[key] = _select_cfg_value(run_cfg, key)
+            rows.append(row)
+
+        # aggregate (mean/std) by group key
+        agg = []
+        grouped = {}
+        for row in rows:
+            key = tuple(row.get(k) for k in group_by) if group_by else ("__all__",)
+            grouped.setdefault(key, []).append(row)
+
+        metric_union = set(metric_keys)
+        if not metric_union:
+            for row in rows:
+                metric_union.update(row["metrics"].keys())
+        for key, group_rows in grouped.items():
+            entry = {}
+            if group_by:
+                for idx, k in enumerate(group_by):
+                    entry[k] = key[idx]
+            for m in sorted(metric_union):
+                vals = [r["metrics"].get(m) for r in group_rows if isinstance(r["metrics"].get(m), (int, float))]
+                if vals:
+                    mean = sum(vals) / len(vals)
+                    var = sum((v - mean) ** 2 for v in vals) / max(1, len(vals))
+                    entry[m] = {"mean": mean, "std": var**0.5}
+            agg.append(entry)
+
+        with open(os.path.join(out_dir, "agg.json"), "w", encoding="utf-8") as f:
+            json.dump({"rows": rows, "agg": agg}, f, indent=2)
+        status_state = "completed"
 
     status = {
         "state": status_state,

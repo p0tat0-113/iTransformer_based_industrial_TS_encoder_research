@@ -44,12 +44,12 @@
   - Patch-MAE downstream은 patch 기반 유지
   - 메모: `itransformer.downstream` 엔트리포인트 추가, SL/patch SL 테스트 성공
 
-### M3.5. 산출물/집계 스키마 정비 (output_result_recator_plan 기반)
-- [ ] **op/cmp/agg 분리 정책 확정 및 반영**
+### M4.5. 산출물/집계 스키마 정비 (output_result_recator_plan 기반)
+- [x] **op/cmp/agg 분리 정책 확정 및 반영**
   - op_results.json: 단일 평가/진단 결과
   - cmp.json: 두 run 비교 결과
   - agg.json: 다수 run 집계 결과
-- [ ] Run 메트릭 스키마 정비 (pretrain/downstream 공통)
+- [x] Run 메트릭 스키마 정비 (pretrain/downstream 공통)
   - 스키마 정의: summary/curves/cost/notes 구조 고정
   - 매 epoch validation loss 계산
   - best_epoch 저장 (summary)
@@ -59,22 +59,22 @@
   - cost 기록: wall_time, time/epoch, time/step, gpu_mem_peak, params_count
   - pretrain val_loss는 **masked_only** 기준 명시
   - 문서에 스키마 예시 추가
-- [ ] **downstream 메타 전달 누락 해결**
+- [x] **downstream 메타 전달 누락 해결**
   - metadata.enabled=true일 때 meta_emb를 로드/캐시 후 model에 전달
   - train/val/test 모두 동일 meta_emb 사용
-- [ ] A-EV-1~3: op_results.json에 시나리오 하이퍼파라미터 기록
+- [x] A-EV-1~3: op_results.json에 시나리오 하이퍼파라미터 기록
   - S1/S3: level
   - S2: downsample factor
   - op_results.json에 op_params 섹션 명시 저장
-- [ ] A-DIAG-1: baseline+shuffle 동시 평가 기록
+- [x] A-DIAG-1: baseline+shuffle 동시 평가 기록
   - op_results.json: base_metrics / shuffled_metrics / delta
-- [ ] A-DIAG-2: 메타 결측률 sweep을 단일 op로 실행
+- [x] A-DIAG-2: 메타 결측률 sweep을 단일 op로 실행
   - op_results.json: 결측률별 {mse, mae}
-- [ ] A-DIAG-3: CMP 결과 정규화
+- [x] A-DIAG-3: CMP 결과 정규화
   - cmp.json: left/right {mse, mae} + {delta_mse, delta_mae}
-- [ ] CMP 스키마 고정
+- [x] CMP 스키마 고정
   - cmp.json에 left/right/delta만 저장, key 이름 통일
-- [ ] AGG 스키마 고정
+- [x] AGG 스키마 고정
   - agg.json에 rows(원본) + agg(집계) 구조 사용
 - [ ] B-EV-1: 비용 집계는 agg.json으로 저장
   - run 메트릭(cost) 집계 (seed별 raw + mean/std)
@@ -83,10 +83,11 @@
   - 성능 집계는 variant×patch_len 기준 (P1은 patch_len 영향 없음 주석)
 - [ ] B-EV-4: CKA 집계 (P1~P4 같은 모델끼리)
   - agg.json: first_layer_cka / last_layer_cka / delta_cka
-- [ ] B-EV-5: 실험 취소 (실행하지 않음) — 기록/정책만 유지
+- [x] B-EV-5: 실험 취소 (실행하지 않음) — 기록/정책만 유지
 - [ ] C-RB-1/2: R1/R2 missing rate sweep을 단일 op로 실행
   - op_results.json: 결측률별 {mse, mae}
   - agg.json: 같은 모델(P0~P4)끼리 단순 집계
+  - 메모: sweep 저장 구현 완료, agg 집계는 미구현
 
 ### M4. 평가/진단/분석
 - [x] Scenario eval (S1/S2/S3)
@@ -183,7 +184,7 @@
 - 실험군 B/C는 **메타데이터 미사용**, A에서만 사용
 
 ## 8. 다음 작업 (Next Step)
-- M3.5: 산출물/집계 스키마 정비 + CMP/AGG 집계
+- M4.5: 산출물/집계 스키마 정비 + CMP/AGG 집계
 
 ## 9. 실험군 A 메타데이터 파이프라인(갱신)
 - 저장 포맷: `dataset/<name>/metadata.jsonl` (수동 매핑 파일 기반)
@@ -209,7 +210,7 @@
 ### 실험군 A (메타 임베딩)
 - S1~S3 시나리오 평가 코드 구현 완료 (M4)
 - T1~T3 진단 코드 구현 완료 (M4)
-- CMP/AGG 집계 로직 미구현 → M3.5에 체크리스트 반영
+- CMP/AGG 집계 로직 미구현 → M4.5에 체크리스트 반영
 
 ### 실험군 B (패칭)
 - P0~P4 구조 구현 미완 (P1~P4 필요) → M2 체크리스트에 반영

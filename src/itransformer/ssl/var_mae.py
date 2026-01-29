@@ -84,7 +84,7 @@ class VarMAE(nn.Module):
             return self.meta_fuse(fused)
         return enc_out
 
-    def forward(self, x_enc, x_mark=None, meta_emb=None):
+    def forward(self, x_enc, x_mark=None, meta_emb=None, return_details: bool = False):
         # x_enc: [B, L, N]
         if self.use_norm:
             means = x_enc.mean(1, keepdim=True).detach()
@@ -110,5 +110,9 @@ class VarMAE(nn.Module):
         denom = mask_f.sum() * x_enc.size(1)
         if denom.item() == 0:
             denom = torch.tensor(1.0, device=x_enc.device)
-        loss = ((recon - x_enc) ** 2 * mask_f).sum() / denom
+        mse = ((recon - x_enc) ** 2 * mask_f).sum() / denom
+        mae = (torch.abs(recon - x_enc) * mask_f).sum() / denom
+        loss = mse
+        if return_details:
+            return loss, mse, mae
         return loss

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import datetime, timezone
 
 import hydra
@@ -12,6 +13,20 @@ from itransformer.data import data_provider
 from itransformer.models.factory import build_model
 from itransformer.utils.metadata import load_or_build_embeddings
 from itransformer.utils.metrics import mae, mse
+
+
+def _param_count(model) -> int:
+    return sum(p.numel() for p in model.parameters())
+
+
+def _grad_norm(parameters) -> float:
+    total = 0.0
+    for p in parameters:
+        if p.grad is None:
+            continue
+        param_norm = p.grad.data.norm(2).item()
+        total += param_norm * param_norm
+    return total**0.5
 
 
 def _freeze_modules(modules, freeze: bool) -> None:
@@ -98,7 +113,30 @@ def main(cfg) -> None:
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=cfg.optim.lr)
     criterion = torch.nn.MSELoss()
 
+    patience = int(getattr(cfg.train, "patience", 0) or 0)
+    best_val = float("inf")
+    best_epoch = 0
+    best_train = {"loss": None, "mse": None, "mae": None}
+    best_val_metrics = {"loss": None}
+    wait = 0
+    early_stopped = False
+    stopped_epoch = None
+
+    train_loss_curve = []
+    val_loss_curve = []
+    grad_norm_curve = []
+    lr_curve = []
+
+    epoch_times = []
+    total_step_time = 0.0
+    total_steps = 0
+
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+
+    wall_start = time.perf_counter()
     for epoch in range(cfg.train.epochs):
+        epoch_start = time.perf_counter()
         if cfg.train.mode == "lp":
             _freeze_modules(freeze_modules, True)
         elif cfg.train.mode == "ft" and cfg.train.freeze_epochs > 0:
@@ -108,7 +146,11 @@ def main(cfg) -> None:
 
         model.train()
         epoch_losses = []
+        epoch_mses = []
+        epoch_maes = []
+        epoch_grad_norms = []
         for batch in train_loader:
+            step_start = time.perf_counter()
             batch_x, batch_y, batch_x_mark, _ = batch
             x_enc = torch.as_tensor(batch_x, dtype=torch.float32, device=device)
             x_mark = None
@@ -124,22 +166,83 @@ def main(cfg) -> None:
                 out = model(x_enc, x_mark, meta_emb)
             loss = criterion(out, true)
             loss.backward()
+            grad_norm = _grad_norm(model.parameters())
             optimizer.step()
             epoch_losses.append(loss.detach().item())
+            epoch_mses.append(torch.mean((out - true) ** 2).detach().item())
+            epoch_maes.append(torch.mean(torch.abs(out - true)).detach().item())
+            epoch_grad_norms.append(grad_norm)
+            step_time = time.perf_counter() - step_start
+            total_step_time += step_time
+            total_steps += 1
 
-        avg_loss = sum(epoch_losses) / max(1, len(epoch_losses))
-        print(f"[downstream] epoch={epoch+1} loss={avg_loss:.6f}")
+        train_loss = sum(epoch_losses) / max(1, len(epoch_losses))
+        train_mse = sum(epoch_mses) / max(1, len(epoch_mses))
+        train_mae = sum(epoch_maes) / max(1, len(epoch_maes))
+        val_metrics = _evaluate(model, val_loader, device, cfg.data.pred_len, meta_emb=meta_emb)
+        val_loss = val_metrics["mse"]
 
+        train_loss_curve.append(train_loss)
+        val_loss_curve.append(val_loss)
+        grad_norm_curve.append(sum(epoch_grad_norms) / max(1, len(epoch_grad_norms)))
+        lr_curve.append(float(optimizer.param_groups[0]["lr"]))
+
+        epoch_time = time.perf_counter() - epoch_start
+        epoch_times.append(epoch_time)
+
+        print(
+            f"[downstream] epoch={epoch+1} train_loss={train_loss:.6f} val_loss={val_loss:.6f}"
+        )
+
+        if val_loss < best_val:
+            best_val = val_loss
+            best_epoch = epoch + 1
+            best_train = {"loss": train_loss, "mse": train_mse, "mae": train_mae}
+            best_val_metrics = {"loss": val_loss}
+            wait = 0
+            torch.save(
+                {"state_dict": model.state_dict(), "cfg": OmegaConf.to_container(cfg, resolve=True)},
+                os.path.join(run_dir, "downstream_checkpoint.pt"),
+            )
+        else:
+            wait += 1
+            if patience > 0 and wait >= patience:
+                early_stopped = True
+                stopped_epoch = epoch + 1
+                break
+
+    wall_time = time.perf_counter() - wall_start
+
+    test_metrics = _evaluate(model, test_loader, device, cfg.data.pred_len, meta_emb=meta_emb)
     metrics = {
-        "val": _evaluate(model, val_loader, device, cfg.data.pred_len, meta_emb=meta_emb),
-        "test": _evaluate(model, test_loader, device, cfg.data.pred_len, meta_emb=meta_emb),
+        "summary": {
+            "best_epoch": best_epoch,
+            "best_train": best_train,
+            "best_val": best_val_metrics,
+            "early_stopped": early_stopped,
+            "patience": patience,
+            "stopped_epoch": stopped_epoch,
+        },
+        "curves": {
+            "train_loss": train_loss_curve,
+            "val_loss": val_loss_curve,
+            "grad_norm": grad_norm_curve,
+            "lr": lr_curve,
+        },
+        "cost": {
+            "wall_time_sec_total": wall_time,
+            "time_sec_per_epoch_mean": sum(epoch_times) / max(1, len(epoch_times)),
+            "time_sec_per_step_mean": total_step_time / max(1, total_steps),
+            "gpu_mem_peak_mb": (
+                torch.cuda.max_memory_allocated(device) / (1024**2) if device.type == "cuda" else None
+            ),
+            "params_count": _param_count(model),
+        },
+        "eval": {"test": test_metrics},
     }
 
     with open(os.path.join(run_dir, "downstream_metrics.json"), "w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2)
-
-    torch.save({"state_dict": model.state_dict(), "cfg": OmegaConf.to_container(cfg, resolve=True)},
-               os.path.join(run_dir, "downstream_checkpoint.pt"))
 
     with open(os.path.join(run_dir, "status.json"), "w", encoding="utf-8") as f:
         json.dump(
