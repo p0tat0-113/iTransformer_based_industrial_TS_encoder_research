@@ -10,6 +10,7 @@ from omegaconf import OmegaConf
 
 from itransformer.data import data_provider
 from itransformer.models.factory import build_model
+from itransformer.utils.metadata import load_or_build_embeddings
 from itransformer.utils.metrics import mae, mse
 
 
@@ -30,7 +31,7 @@ def _load_ssl_checkpoint(model, path: str) -> None:
         print(f"[downstream] unexpected keys: {unexpected[:5]}{'...' if len(unexpected)>5 else ''}")
 
 
-def _evaluate(model, loader, device, pred_len):
+def _evaluate(model, loader, device, pred_len, meta_emb=None):
     model.eval()
     preds = []
     trues = []
@@ -41,7 +42,10 @@ def _evaluate(model, loader, device, pred_len):
             x_mark = None
             if batch_x_mark is not None:
                 x_mark = torch.as_tensor(batch_x_mark, dtype=torch.float32, device=device)
-            out = model(x_enc, x_mark)
+            if meta_emb is None:
+                out = model(x_enc, x_mark)
+            else:
+                out = model(x_enc, x_mark, meta_emb)
             true = torch.as_tensor(batch_y, dtype=torch.float32, device=device)
             true = true[:, -pred_len:, :]
             preds.append(out)
@@ -71,6 +75,13 @@ def main(cfg) -> None:
 
     model = build_model(cfg)
     model = model.to(device)
+
+    meta_emb = None
+    if getattr(cfg.metadata, "enabled", False):
+        sensor_ids = getattr(train_data, "sensor_ids", None)
+        if not sensor_ids:
+            raise ValueError("Dataset does not expose sensor_ids for metadata matching.")
+        meta_emb = load_or_build_embeddings(cfg, sensor_ids).to(device)
 
     if cfg.train.mode in ("ft", "lp"):
         if not cfg.train.ssl_ckpt_path:
@@ -107,7 +118,10 @@ def main(cfg) -> None:
             true = true[:, -cfg.data.pred_len :, :]
 
             optimizer.zero_grad()
-            out = model(x_enc, x_mark)
+            if meta_emb is None:
+                out = model(x_enc, x_mark)
+            else:
+                out = model(x_enc, x_mark, meta_emb)
             loss = criterion(out, true)
             loss.backward()
             optimizer.step()
@@ -117,8 +131,8 @@ def main(cfg) -> None:
         print(f"[downstream] epoch={epoch+1} loss={avg_loss:.6f}")
 
     metrics = {
-        "val": _evaluate(model, val_loader, device, cfg.data.pred_len),
-        "test": _evaluate(model, test_loader, device, cfg.data.pred_len),
+        "val": _evaluate(model, val_loader, device, cfg.data.pred_len, meta_emb=meta_emb),
+        "test": _evaluate(model, test_loader, device, cfg.data.pred_len, meta_emb=meta_emb),
     }
 
     with open(os.path.join(run_dir, "downstream_metrics.json"), "w", encoding="utf-8") as f:
