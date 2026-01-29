@@ -29,6 +29,22 @@ def _split_run_ids(value):
     return list(value)
 
 
+def _run_code_from_cfg(cfg_dict: dict) -> str:
+    return cfg_dict.get("run", {}).get("code", "") if isinstance(cfg_dict, dict) else ""
+
+
+def _run_code_from_run_id(run_id: str) -> str:
+    return run_id.split(".")[0] if run_id else ""
+
+
+def _match_run_code(code: str, prefixes: list[str], codes: list[str]) -> bool:
+    if codes and code not in codes:
+        return False
+    if prefixes and not any(code.startswith(p) for p in prefixes):
+        return False
+    return True
+
+
 def _set_seed(cfg) -> None:
     if getattr(cfg.runtime, "seed", None) is None:
         return
@@ -92,8 +108,12 @@ def _iter_run_configs(runs_dir: str):
 
 def _patch_len_from_cfg(cfg_dict: dict):
     patch = cfg_dict.get("model", {}).get("patch", {})
+    patch_len = patch.get("patch_len")
+    mode = patch.get("mode")
+    if (patch_len is None or patch_len == 0) and mode == "mean_pool":
+        return cfg_dict.get("data", {}).get("seq_len")
     if "patch_len" in patch:
-        return patch.get("patch_len")
+        return patch_len
     return cfg_dict.get("ssl", {}).get("patch_len")
 
 
@@ -156,17 +176,12 @@ def _compute_cka_metrics(cfg, run_id: str):
         x_mark = torch.as_tensor(batch_x_mark, dtype=torch.float32, device=device)
 
     activations = []
-    inputs = []
-
-    def _pre_hook(_, input):
-        inputs.append(input[0])
 
     def _hook(_, __, output):
         activations.append(output[0] if isinstance(output, tuple) else output)
 
     hooks = []
     if hasattr(model, "encoder"):
-        hooks.append(model.encoder.register_forward_pre_hook(_pre_hook))
         for layer in model.encoder.attn_layers:
             hooks.append(layer.register_forward_hook(_hook))
 
@@ -176,14 +191,13 @@ def _compute_cka_metrics(cfg, run_id: str):
     for h in hooks:
         h.remove()
 
-    if not inputs or len(activations) < 1:
+    if len(activations) < 2:
         return {"first_layer_cka": None, "last_layer_cka": None, "delta_cka": None}
 
-    emb = inputs[0].detach()
     first = activations[0].detach()
     last = activations[-1].detach()
-    first_cka = linear_cka(emb, first)
-    last_cka = linear_cka(emb, last)
+    first_cka = linear_cka(first, first)
+    last_cka = linear_cka(first, last)
     return {
         "first_layer_cka": first_cka,
         "last_layer_cka": last_cka,
@@ -197,6 +211,13 @@ def main(cfg) -> None:
 
     if analysis_code in ("B-EV-1", "B-EV-2", "B-EV-4"):
         variants = list(getattr(cfg.analysis, "variants", []) or [])
+        run_code_prefixes = list(getattr(cfg.analysis, "run_code_prefixes", []) or [])
+        run_codes = list(getattr(cfg.analysis, "run_codes", []) or [])
+        if not run_code_prefixes and not run_codes:
+            if analysis_code in ("B-EV-1", "B-EV-4"):
+                run_code_prefixes = ["B-TR"]
+            elif analysis_code == "B-EV-2":
+                run_code_prefixes = ["B-DS"]
         if analysis_code == "B-EV-1":
             variants = variants or ["P0", "P1", "P2", "P3", "P4"]
             rows = []
@@ -205,12 +226,16 @@ def main(cfg) -> None:
                     continue
                 if run_cfg.get("model", {}).get("variant") not in variants:
                     continue
+                run_code = _run_code_from_cfg(run_cfg)
+                if not _match_run_code(run_code, run_code_prefixes, run_codes):
+                    continue
                 metrics, _ = load_run_metrics(run_dir)
                 cost = metrics.get("cost", {})
                 if not cost:
                     continue
                 row = {
                     "run_id": run_id,
+                    "run_code": run_code,
                     "variant": run_cfg.get("model", {}).get("variant"),
                     "patch_len": _patch_len_from_cfg(run_cfg),
                     "seed": run_cfg.get("runtime", {}).get("seed"),
@@ -232,6 +257,9 @@ def main(cfg) -> None:
                     continue
                 if run_cfg.get("train", {}).get("mode") != "lp":
                     continue
+                run_code = _run_code_from_cfg(run_cfg)
+                if not _match_run_code(run_code, run_code_prefixes, run_codes):
+                    continue
                 metrics, _ = load_run_metrics(run_dir)
                 test = metrics.get("eval", {}).get("test", {})
                 if not test:
@@ -246,6 +274,7 @@ def main(cfg) -> None:
                     pre_cost = pre_metrics.get("cost", {})
                 row = {
                     "run_id": run_id,
+                    "run_code": run_code,
                     "variant": run_cfg.get("model", {}).get("variant"),
                     "patch_len": _patch_len_from_cfg(run_cfg),
                     "seed": run_cfg.get("runtime", {}).get("seed"),
@@ -267,10 +296,14 @@ def main(cfg) -> None:
                     continue
                 if run_cfg.get("model", {}).get("variant") not in variants:
                     continue
+                run_code = _run_code_from_cfg(run_cfg)
+                if not _match_run_code(run_code, run_code_prefixes, run_codes):
+                    continue
                 run_cfg_obj = OmegaConf.create(run_cfg)
                 metrics = _compute_cka_metrics(run_cfg_obj, run_id)
                 row = {
                     "run_id": run_id,
+                    "run_code": run_code,
                     "variant": run_cfg.get("model", {}).get("variant"),
                     "patch_len": _patch_len_from_cfg(run_cfg),
                     "seed": run_cfg.get("runtime", {}).get("seed"),
@@ -289,8 +322,18 @@ def main(cfg) -> None:
         os.makedirs(out_dir, exist_ok=True)
         with open(os.path.join(out_dir, "config.yaml"), "w", encoding="utf-8") as f:
             f.write(OmegaConf.to_yaml(cfg, resolve=True))
+        payload = {
+            "rows": rows,
+            "agg": agg,
+            "meta": {
+                "analysis_code": analysis_code,
+                "dataset": cfg.data.name,
+                "run_code_prefixes": run_code_prefixes,
+                "run_codes": run_codes,
+            },
+        }
         with open(os.path.join(out_dir, "agg.json"), "w", encoding="utf-8") as f:
-            json.dump({"rows": rows, "agg": agg}, f, indent=2)
+            json.dump(payload, f, indent=2)
         with open(os.path.join(out_dir, "status.json"), "w", encoding="utf-8") as f:
             json.dump(
                 {
@@ -309,6 +352,10 @@ def main(cfg) -> None:
         op_code = "R1" if analysis_code == "C-RB-1" else "R2"
         variants = list(getattr(cfg.analysis, "variants", []) or []) or ["P0", "P1", "P2", "P3", "P4"]
         group_by = list(getattr(cfg.analysis, "group_by", []) or []) or ["variant", "patch_len"]
+        run_code_prefixes = list(getattr(cfg.analysis, "run_code_prefixes", []) or [])
+        run_codes = list(getattr(cfg.analysis, "run_codes", []) or [])
+        if not run_code_prefixes and not run_codes:
+            run_code_prefixes = ["C-DS"]
         rows = []
         if os.path.isdir(cfg.paths.ops_dir):
             for name in sorted(os.listdir(cfg.paths.ops_dir)):
@@ -329,6 +376,10 @@ def main(cfg) -> None:
                     continue
                 if op_cfg.get("model", {}).get("variant") not in variants:
                     continue
+                run_id = op_cfg.get("eval", {}).get("on_run_id", "")
+                run_code = _run_code_from_run_id(run_id)
+                if not _match_run_code(run_code, run_code_prefixes, run_codes):
+                    continue
                 try:
                     with open(res_path, "r", encoding="utf-8") as f:
                         op_results = json.load(f)
@@ -339,6 +390,8 @@ def main(cfg) -> None:
                     continue
                 row = {
                     "op_id": name,
+                    "run_id": run_id,
+                    "run_code": run_code,
                     "variant": op_cfg.get("model", {}).get("variant"),
                     "patch_len": _patch_len_from_cfg(op_cfg),
                     "seed": op_cfg.get("runtime", {}).get("seed"),
@@ -384,8 +437,18 @@ def main(cfg) -> None:
         os.makedirs(out_dir, exist_ok=True)
         with open(os.path.join(out_dir, "config.yaml"), "w", encoding="utf-8") as f:
             f.write(OmegaConf.to_yaml(cfg, resolve=True))
+        payload = {
+            "rows": rows,
+            "agg": agg,
+            "meta": {
+                "analysis_code": analysis_code,
+                "dataset": cfg.data.name,
+                "run_code_prefixes": run_code_prefixes,
+                "run_codes": run_codes,
+            },
+        }
         with open(os.path.join(out_dir, "agg.json"), "w", encoding="utf-8") as f:
-            json.dump({"rows": rows, "agg": agg}, f, indent=2)
+            json.dump(payload, f, indent=2)
         with open(os.path.join(out_dir, "status.json"), "w", encoding="utf-8") as f:
             json.dump(
                 {
@@ -405,7 +468,7 @@ def main(cfg) -> None:
         if len(run_ids) != 1:
             raise ValueError("analysis.on must be a single run_id for F1/F2/F4/F5")
         run_id = run_ids[0]
-        report_id = cfg.ids.agg_id or build_agg_id(
+        report_id = build_agg_id(
             cfg.ids.agg_id,
             dataset=cfg.data.name,
             code=analysis_code,
@@ -558,6 +621,10 @@ def main(cfg) -> None:
             "left": {"run_id": cfg.analysis.left, **left_vals},
             "right": {"run_id": cfg.analysis.right, **right_vals},
             "delta": delta,
+            "meta": {
+                "analysis_code": cfg.analysis.code,
+                "dataset": cfg.data.name,
+            },
         }
         with open(os.path.join(out_dir, "cmp.json"), "w", encoding="utf-8") as f:
             json.dump(cmp, f, indent=2)
@@ -597,6 +664,7 @@ def main(cfg) -> None:
             cfg_path = os.path.join(run_dir, "config.yaml")
             if os.path.exists(cfg_path):
                 run_cfg = OmegaConf.to_container(OmegaConf.load(cfg_path), resolve=True)
+                row["run_code"] = _run_code_from_cfg(run_cfg)
                 for key in group_by:
                     row[key] = _select_cfg_value(run_cfg, key)
             rows.append(row)
@@ -625,8 +693,16 @@ def main(cfg) -> None:
                     entry[m] = {"mean": mean, "std": var**0.5}
             agg.append(entry)
 
+        payload = {
+            "rows": rows,
+            "agg": agg,
+            "meta": {
+                "analysis_code": cfg.analysis.code,
+                "dataset": cfg.data.name,
+            },
+        }
         with open(os.path.join(out_dir, "agg.json"), "w", encoding="utf-8") as f:
-            json.dump({"rows": rows, "agg": agg}, f, indent=2)
+            json.dump(payload, f, indent=2)
         status_state = "completed"
 
     status = {

@@ -19,6 +19,7 @@ from itransformer.evals.utils import (
     parse_level,
 )
 from itransformer.models.factory import build_model
+from itransformer.utils.ids import build_op_id
 from itransformer.utils.metadata import load_or_build_embeddings
 
 
@@ -183,12 +184,32 @@ def main(cfg) -> None:
     else:
         raise ValueError(f"Unknown eval.op_code: {op_code}")
 
-    op_id = getattr(cfg.eval, "op_id", "") or getattr(cfg.ids, "op_id", "")
+    op_hparams = getattr(cfg.eval, "op_hparams_tag", "") or ""
+    op_id = build_op_id(
+        cfg.ids.op_id,
+        code=getattr(cfg.eval, "code", ""),
+        op_code=op_code,
+        op_hparams=op_hparams,
+        on_run_id=cfg.eval.on_run_id,
+    )
+    cfg.eval.op_id = op_id
     op_dir = os.path.join(cfg.paths.ops_dir, op_id)
     os.makedirs(op_dir, exist_ok=True)
 
     with open(os.path.join(op_dir, "config.yaml"), "w", encoding="utf-8") as f:
         f.write(OmegaConf.to_yaml(cfg, resolve=True))
+
+    run_id = cfg.eval.on_run_id or ""
+    run_code = run_id.split(".")[0] if run_id else ""
+    results["meta"] = {
+        "eval_code": getattr(cfg.eval, "code", ""),
+        "op_code": op_code,
+        "op_hparams_tag": getattr(cfg.eval, "op_hparams_tag", ""),
+        "run_id": run_id,
+        "run_code": run_code,
+        "dataset": cfg.data.name,
+        "model_variant": cfg.model.variant,
+    }
 
     with open(os.path.join(op_dir, "op_results.json"), "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)

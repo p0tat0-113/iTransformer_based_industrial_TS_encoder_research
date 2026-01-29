@@ -6,6 +6,13 @@ from typing import Dict, Iterable, List, Tuple
 import torch
 
 
+def _with_suffix(path: str, suffix: str) -> str:
+    if not path:
+        return path
+    root, ext = os.path.splitext(path)
+    return f"{root}.{suffix}{ext}"
+
+
 def load_metadata_jsonl(path: str) -> Dict[str, Dict]:
     if not path:
         raise ValueError("metadata.path is empty")
@@ -189,6 +196,9 @@ def load_or_build_embeddings(cfg, sensor_ids: Iterable[str]) -> torch.Tensor:
 
     sensor_ids = [str(sid) for sid in sensor_ids]
     cache_path = cfg.metadata.cache.path
+    meta_source = getattr(cfg.model.meta, "source", "real")
+    if meta_source == "constant":
+        cache_path = _with_suffix(cache_path, "constant")
 
     if cache_path and os.path.exists(cache_path):
         payload = torch.load(cache_path, map_location="cpu")
@@ -208,9 +218,17 @@ def load_or_build_embeddings(cfg, sensor_ids: Iterable[str]) -> torch.Tensor:
             f"Metadata cache not found: {cache_path}. "
             "Set metadata.cache.build=true to build embeddings."
         )
-
-    meta_map = load_metadata_jsonl(cfg.metadata.path)
-    texts = build_texts(sensor_ids, meta_map, cfg.metadata.template, cfg.metadata.unk_token, cfg.metadata.unk_template)
+    if meta_source == "constant":
+        texts = [cfg.metadata.unk_token for _ in sensor_ids]
+    else:
+        meta_map = load_metadata_jsonl(cfg.metadata.path)
+        texts = build_texts(
+            sensor_ids,
+            meta_map,
+            cfg.metadata.template,
+            cfg.metadata.unk_token,
+            cfg.metadata.unk_template,
+        )
 
     if cfg.metadata.embedding.provider != "gemini":
         raise ValueError(f"Unsupported embedding provider: {cfg.metadata.embedding.provider}")

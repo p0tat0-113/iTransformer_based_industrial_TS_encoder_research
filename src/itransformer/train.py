@@ -18,7 +18,7 @@ from itransformer.utils.metadata import load_or_build_embeddings
 def main(cfg) -> None:
     # Resolve run_id (allow override from config interpolation)
     run_id = cfg.run.id
-    if not run_id:
+    if not run_id or "{" in str(run_id):
         run_id = build_run_id(
             cfg.ids.run_id,
             code=cfg.run.code,
@@ -28,6 +28,7 @@ def main(cfg) -> None:
             seed=cfg.runtime.seed,
         )
 
+    cfg.run.id = run_id
     run_dir = os.path.join(cfg.paths.runs_dir, run_id)
     os.makedirs(run_dir, exist_ok=True)
 

@@ -138,6 +138,32 @@
   - 최소 plan으로 1개 dataset/1개 run/op/cmp/agg 실행 확인
   - 메모: /tmp/plan_smoke.yaml로 OP/CMP/AGG 1회씩 성공
 
+### M5.3 정합성/불일치 해결 (misalign_analysis 기반)
+- [x] ID 규칙 통일 (문서 ↔ 코드)
+  - default.yaml(op/cmp/agg 포함)이 문서 양식과 일치하도록 수정
+  - run/op/cmp/agg ID는 **전부 default.yaml 템플릿 기반**으로 생성 (수동 string 조합 금지)
+  - eval에서 op_id 생성 시 `build_op_id()` 또는 ids 템플릿 정규화 적용
+- [x] 오케스트레이터 검증 강화
+  - plan 로더에 필수 필드/타입 검증 추가 (dataset/variant/op_code/run_id 등)
+  - 잘못된 스펙은 사전 에러로 중단
+
+- [x] A2(메타 constant/UNK) 분기 구현
+  - `meta.source=constant` 시 **실제 metadata.jsonl을 사용하지 않고** 상수/UNK 텍스트로 임베딩 생성
+  - A1(실제 메타) ↔ A2(상수 메타) 구분이 명확하게 동작하도록 보장
+
+- [x] 실험군 B 패칭 집계 불일치 수정
+  - B-EV 집계 시 run.code 필터 적용 (예: B-TR-*만)
+  - P1(mean_pool)의 patch_len=0 문제 해결 (agg에서 seq_len 반영)
+  - CKA 정의를 **첫 encoder layer vs 마지막 encoder layer**로 변경
+
+- [x] 실험군 C SSL/patch_len 연동 보완
+  - downstream에서 ssl_ckpt로부터 patch_len 자동 주입
+  - C-RB 집계 시 run.code 또는 실험군 구분 필터 적용 (C-DS만 집계)
+
+- [x] 산출물 스키마 혼합 방지 장치
+  - op_results/cmp/agg에 run.code/exp_group 등 식별 필드 기록
+  - analysis 집계 시 **실험군 간 결과 혼합 방지 필터** 기본 적용
+
 ### M6. 정리
 - [ ] legacy 코드 삭제
 - [ ] 문서화 (Quickstart + 실험 예시)

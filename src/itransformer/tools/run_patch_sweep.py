@@ -5,8 +5,12 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 from datetime import datetime, timezone
 
+from omegaconf import OmegaConf
+
+from itransformer.utils.ids import build_run_id
 
 def _parse_list(value: str, cast=int):
     if value is None or value == "":
@@ -20,8 +24,23 @@ def _parse_list(value: str, cast=int):
     return items
 
 
-def _build_run_id(run_code: str, dataset: str, variant: str, hparams_tag: str, seed: int) -> str:
-    return f"{run_code}.{dataset}.{variant}.{hparams_tag}.sd{seed}"
+def _load_run_id_template() -> str:
+    ids_path = Path(__file__).resolve().parents[3] / "conf" / "ids" / "default.yaml"
+    if ids_path.exists():
+        cfg = OmegaConf.load(ids_path)
+        return cfg.get("run_id", "{I}.{D}.{V}.{H}.sd{seed}")
+    return "{I}.{D}.{V}.{H}.sd{seed}"
+
+
+def _build_run_id(template: str, run_code: str, dataset: str, variant: str, hparams_tag: str, seed: int) -> str:
+    return build_run_id(
+        template,
+        code=run_code,
+        dataset=dataset,
+        variant=variant,
+        hparams_tag=hparams_tag,
+        seed=seed,
+    )
 
 
 def main() -> None:
@@ -40,6 +59,7 @@ def main() -> None:
     parser.add_argument("--sweep-dir", default="./artifacts/sweeps", help="Sweep output directory.")
     args = parser.parse_args()
 
+    run_id_template = _load_run_id_template()
     variants = _parse_list(args.variants, cast=str)
     patch_lens = _parse_list(args.patch_lens, cast=int)
     seeds = _parse_list(args.seeds, cast=int)
@@ -70,7 +90,7 @@ def main() -> None:
         for patch_len in patch_lens:
             for seed in seeds:
                 hparams_tag = args.hparam_tag.format(patch_len=patch_len, variant=variant, seed=seed)
-                run_id = _build_run_id(args.run_code, args.data, variant, hparams_tag, seed)
+                run_id = _build_run_id(run_id_template, args.run_code, args.data, variant, hparams_tag, seed)
                 run_dir = os.path.join("./artifacts/runs", run_id)
                 status_path = os.path.join(run_dir, "status.json")
                 if args.resume and os.path.exists(status_path):

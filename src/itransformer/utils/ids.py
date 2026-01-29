@@ -12,6 +12,8 @@ def build_run_id(template: str, *, code: str, dataset: str, variant: str, hparam
 
 
 def build_op_id(template: str, *, code: str, op_code: str, op_hparams: str, on_run_id: str) -> str:
+    if op_hparams and op_hparams.startswith("."):
+        op_hparams = op_hparams[1:]
     suffix = f".{op_hparams}" if op_hparams else ""
     return template.format(
         I=code,

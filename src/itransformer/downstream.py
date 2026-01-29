@@ -11,6 +11,7 @@ from omegaconf import OmegaConf
 
 from itransformer.data import data_provider
 from itransformer.models.factory import build_model
+from itransformer.utils.ids import build_run_id
 from itransformer.utils.metadata import load_or_build_embeddings
 from itransformer.utils.metrics import mae, mse
 
@@ -46,6 +47,29 @@ def _load_ssl_checkpoint(model, path: str) -> None:
         print(f"[downstream] unexpected keys: {unexpected[:5]}{'...' if len(unexpected)>5 else ''}")
 
 
+def _maybe_inject_patch_len(cfg, ckpt_path: str) -> None:
+    if not ckpt_path:
+        return
+    try:
+        ckpt = torch.load(ckpt_path, map_location="cpu")
+    except Exception:
+        return
+    ckpt_cfg = ckpt.get("cfg") or {}
+    if not isinstance(ckpt_cfg, dict):
+        return
+    patch_cfg = ckpt_cfg.get("model", {}).get("patch", {}) if isinstance(ckpt_cfg, dict) else {}
+    ckpt_patch_len = patch_cfg.get("patch_len") or ckpt_cfg.get("ssl", {}).get("patch_len")
+    ckpt_patch_mode = patch_cfg.get("mode") or ckpt_cfg.get("ssl", {}).get("patch_mode")
+
+    if not hasattr(cfg.model, "patch"):
+        return
+    if getattr(cfg.model.patch, "mode", "") == "mean_pool":
+        cfg.model.patch.patch_len = cfg.data.seq_len
+        return
+    if getattr(cfg.model.patch, "patch_len", 0) in (0, None) and ckpt_patch_len:
+        cfg.model.patch.patch_len = ckpt_patch_len
+
+
 def _evaluate(model, loader, device, pred_len, meta_emb=None):
     model.eval()
     preds = []
@@ -76,6 +100,16 @@ def _evaluate(model, loader, device, pred_len, meta_emb=None):
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def main(cfg) -> None:
     run_id = cfg.run.id
+    if not run_id or "{" in str(run_id):
+        run_id = build_run_id(
+            cfg.ids.run_id,
+            code=cfg.run.code,
+            dataset=cfg.data.name,
+            variant=cfg.model.variant,
+            hparams_tag=cfg.run.hparams_tag,
+            seed=cfg.runtime.seed,
+        )
+    cfg.run.id = run_id
     run_dir = os.path.join(cfg.paths.runs_dir, run_id)
     os.makedirs(run_dir, exist_ok=True)
 
@@ -87,6 +121,9 @@ def main(cfg) -> None:
     train_data, train_loader = data_provider(cfg, flag="train")
     val_data, val_loader = data_provider(cfg, flag="val")
     test_data, test_loader = data_provider(cfg, flag="test")
+
+    if cfg.train.mode in ("ft", "lp") and cfg.train.ssl_ckpt_path:
+        _maybe_inject_patch_len(cfg, cfg.train.ssl_ckpt_path)
 
     model = build_model(cfg)
     model = model.to(device)

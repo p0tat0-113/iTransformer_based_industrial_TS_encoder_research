@@ -49,7 +49,7 @@ def _eval_val_loss(model, loader, device, meta_emb):
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def main(cfg) -> None:
     run_id = cfg.run.id
-    if not run_id:
+    if not run_id or "{" in str(run_id):
         run_id = build_run_id(
             cfg.ids.run_id,
             code=cfg.run.code,
@@ -59,6 +59,7 @@ def main(cfg) -> None:
             seed=cfg.runtime.seed,
         )
 
+    cfg.run.id = run_id
     run_dir = os.path.join(cfg.paths.runs_dir, run_id)
     os.makedirs(run_dir, exist_ok=True)
 

@@ -1,4 +1,4 @@
-run_id: "${run.code}.${data.name}.${model.variant}.${run.hparams_tag}.sd${runtime.seed}"
-op_id: "${eval.code}__OP=${eval.op_code}${eval.op_hparams_tag}__ON=${eval.on_run_id}"
-cmp_id: "CMP.${data.name}.${analysis.code}__L=${analysis.left}__R=${analysis.right}"
-agg_id: "AGG.${data.name}.${analysis.code}__ON=${analysis.on}"
+run_id: "{I}.{D}.{V}.{H}.sd{seed}"
+op_id: "{I}__OP={code}{op_hparams}__ON={RunID}"
+cmp_id: "CMP.{D}.{I}__L={RunID_left}__R={RunID_right}"
+agg_id: "AGG.{D}.{I}__ON={RunIDs}"
