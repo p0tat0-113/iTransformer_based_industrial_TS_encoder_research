@@ -201,8 +201,13 @@
       utils/
       orchestrator/
   dataset/
-  exp_plan.md
-  refactor_plan.md
+  documents/
+    README.md
+    plans/exp_plan.md
+    plans/refactor_plan.md
+    guides/metadata_guide.md
+    analysis/
+  legacy/
 ```
 
 ## 4. Hydra Config 스키마 요약
@@ -236,7 +241,7 @@
 - 실험군 B/C는 **메타데이터 미사용**, A에서만 사용
 
 ## 8. 다음 작업 (Next Step)
-- M4.5: 산출물/집계 스키마 정비 + CMP/AGG 집계
+- M6 후속: 문서 교차 링크 정리 및 예시 플랜 추가
 
 ## 9. 실험군 A 메타데이터 파이프라인(갱신)
 - 저장 포맷: `dataset/<name>/metadata.jsonl` (수동 매핑 파일 기반)

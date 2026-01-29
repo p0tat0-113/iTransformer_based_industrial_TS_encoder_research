@@ -1,4 +1,4 @@
-아래는 `exp_plan.md`, `output_result_recator_plan.md`, `refactor_plan.md`를 기준으로 현재 코드가 어떻게 구현되어 있는지 **광범위·심층 점검한 보고서**야. (코드 기준: `src/itransformer/*`, `conf/*` 전반)
+아래는 `documents/plans/exp_plan.md`, `documents/analysis/output_result_recator_plan.md`, `documents/plans/refactor_plan.md`를 기준으로 현재 코드가 어떻게 구현되어 있는지 **광범위·심층 점검한 보고서**야. (코드 기준: `src/itransformer/*`, `conf/*` 전반)
 
 **요약**
 - A/B/C 실험의 **핵심 루프(Pretrain/Downstream/Eval/Analysis, op/cmp/agg 분리)**는 대부분 계획과 부합.
