@@ -88,6 +88,8 @@
   - op_results.json: 결측률별 {mse, mae}
   - agg.json: 같은 모델(P0~P4)끼리 단순 집계
   - 메모: sweep 저장 + agg 집계 구현 완료
+- [x] patch_len sweep 실행/로그 구조 구현 (B 실험군)
+  - 메모: 최소 스위퍼 `itransformer.tools.run_patch_sweep` 추가 (manifest+logs)
 
 ### M4. 평가/진단/분석
 - [x] Scenario eval (S1/S2/S3)
@@ -113,7 +115,6 @@
 - [ ] exp_plan.yaml 스펙 → Run/Op/CMP/AGG 생성
 - [ ] DAG 기반 실행 (train → eval → analysis)
 - [ ] resume/skip 지원
-- [ ] patch_len sweep 실행/로그 구조 구현 (B 실험군)
 
 ### M6. 정리
 - [ ] legacy 코드 삭제
