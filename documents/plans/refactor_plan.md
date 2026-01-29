@@ -166,8 +166,10 @@
   - 메모: A/B/C 스모크 실행 완료, op_hparams float 처리 및 time-feature meta padding, P0 baseline(패치 없음/patch_len=none) 반영
 
 ### M6. 정리
-- [ ] legacy 코드 삭제
-- [ ] 문서화 (Quickstart + 실험 예시)
+- [x] legacy 코드 정리
+  - 메모: 삭제하지 않고 `/workspace/legacy`로 이동
+- [x] 문서화 (Quickstart + 실험 예시)
+  - 메모: `/workspace/documents`에 상세 문서/튜토리얼 작성
 
 ## 3. 타깃 디렉토리 구조 (Target Layout)
 ```
