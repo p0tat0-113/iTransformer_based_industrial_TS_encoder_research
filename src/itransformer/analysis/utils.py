@@ -7,6 +7,7 @@ def load_run_checkpoint(run_id: str, runs_dir: str) -> str:
     run_dir = os.path.join(runs_dir, run_id)
     candidates = [
         os.path.join(run_dir, "downstream_checkpoint.pt"),
+        os.path.join(run_dir, "pretrain_checkpoint.pt"),
         os.path.join(run_dir, "checkpoint.pt"),
     ]
     for path in candidates:

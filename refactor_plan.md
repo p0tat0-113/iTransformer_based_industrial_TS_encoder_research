@@ -76,12 +76,12 @@
   - cmp.json에 left/right/delta만 저장, key 이름 통일
 - [x] AGG 스키마 고정
   - agg.json에 rows(원본) + agg(집계) 구조 사용
-- [ ] B-EV-1: 비용 집계는 agg.json으로 저장
+- [x] B-EV-1: 비용 집계는 agg.json으로 저장
   - run 메트릭(cost) 집계 (seed별 raw + mean/std)
-- [ ] B-EV-2: P1~P4 SSL ckpt → LP downstream 성능 집계 (P0 제외)
+- [x] B-EV-2: P1~P4 SSL ckpt → LP downstream 성능 집계 (P0 제외)
   - cost는 pretrain 기준(A안)
   - 성능 집계는 variant×patch_len 기준 (P1은 patch_len 영향 없음 주석)
-- [ ] B-EV-4: CKA 집계 (P1~P4 같은 모델끼리)
+- [x] B-EV-4: CKA 집계 (P1~P4 같은 모델끼리)
   - agg.json: first_layer_cka / last_layer_cka / delta_cka
 - [x] B-EV-5: 실험 취소 (실행하지 않음) — 기록/정책만 유지
 - [ ] C-RB-1/2: R1/R2 missing rate sweep을 단일 op로 실행

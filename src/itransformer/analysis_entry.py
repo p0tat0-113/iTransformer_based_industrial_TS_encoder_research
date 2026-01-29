@@ -73,9 +73,237 @@ def _select_cfg_value(cfg_dict: dict, key_path: str):
     return cur
 
 
+def _iter_run_configs(runs_dir: str):
+    if not os.path.isdir(runs_dir):
+        return
+    for name in sorted(os.listdir(runs_dir)):
+        run_dir = os.path.join(runs_dir, name)
+        if not os.path.isdir(run_dir):
+            continue
+        cfg_path = os.path.join(run_dir, "config.yaml")
+        if not os.path.exists(cfg_path):
+            continue
+        try:
+            cfg = OmegaConf.to_container(OmegaConf.load(cfg_path), resolve=True)
+        except Exception:
+            continue
+        yield name, run_dir, cfg
+
+
+def _patch_len_from_cfg(cfg_dict: dict):
+    patch = cfg_dict.get("model", {}).get("patch", {})
+    if "patch_len" in patch:
+        return patch.get("patch_len")
+    return cfg_dict.get("ssl", {}).get("patch_len")
+
+
+def _aggregate_rows(rows, group_by, metric_keys):
+    grouped = {}
+    for row in rows:
+        key = tuple(row.get(k) for k in group_by) if group_by else ("__all__",)
+        grouped.setdefault(key, []).append(row)
+
+    metric_union = set(metric_keys)
+    if not metric_union:
+        for row in rows:
+            metric_union.update(row["metrics"].keys())
+
+    agg = []
+    for key, group_rows in grouped.items():
+        entry = {}
+        if group_by:
+            for idx, k in enumerate(group_by):
+                entry[k] = key[idx]
+        for m in sorted(metric_union):
+            vals = [r["metrics"].get(m) for r in group_rows if isinstance(r["metrics"].get(m), (int, float))]
+            if vals:
+                mean = sum(vals) / len(vals)
+                var = sum((v - mean) ** 2 for v in vals) / max(1, len(vals))
+                entry[m] = {"mean": mean, "std": var**0.5}
+        agg.append(entry)
+    return agg
+
+
+def _compute_cka_metrics(cfg, run_id: str):
+    # Ensure patch_len is set for patch-based models
+    if hasattr(cfg, "model") and hasattr(cfg.model, "patch"):
+        patch_len = getattr(cfg.model.patch, "patch_len", None)
+        if not patch_len:
+            mode = getattr(cfg.model.patch, "mode", "")
+            if mode == "mean_pool":
+                cfg.model.patch.patch_len = cfg.data.seq_len
+            else:
+                cfg.model.patch.patch_len = getattr(cfg.ssl, "patch_len", None)
+
+    ckpt_path = load_run_checkpoint(run_id, cfg.paths.runs_dir)
+    model = build_model(cfg)
+    ckpt = torch.load(ckpt_path, map_location="cpu")
+    state = ckpt.get("state_dict", ckpt)
+    model_state = model.state_dict()
+    filtered = {k: v for k, v in state.items() if k in model_state and v.shape == model_state[k].shape}
+    model.load_state_dict(filtered, strict=False)
+    device = torch.device(
+        "cuda" if cfg.runtime.device == "cuda" and torch.cuda.is_available() else "cpu"
+    )
+    model = model.to(device)
+
+    _, train_loader = data_provider(cfg, flag="train")
+    batch = next(iter(train_loader))
+    batch_x, _, batch_x_mark, _ = batch
+    x_enc = torch.as_tensor(batch_x, dtype=torch.float32, device=device)
+    x_mark = None
+    if batch_x_mark is not None:
+        x_mark = torch.as_tensor(batch_x_mark, dtype=torch.float32, device=device)
+
+    activations = []
+    inputs = []
+
+    def _pre_hook(_, input):
+        inputs.append(input[0])
+
+    def _hook(_, __, output):
+        activations.append(output[0] if isinstance(output, tuple) else output)
+
+    hooks = []
+    if hasattr(model, "encoder"):
+        hooks.append(model.encoder.register_forward_pre_hook(_pre_hook))
+        for layer in model.encoder.attn_layers:
+            hooks.append(layer.register_forward_hook(_hook))
+
+    if hasattr(model, "forward"):
+        _ = model(x_enc, x_mark)
+
+    for h in hooks:
+        h.remove()
+
+    if not inputs or len(activations) < 1:
+        return {"first_layer_cka": None, "last_layer_cka": None, "delta_cka": None}
+
+    emb = inputs[0].detach()
+    first = activations[0].detach()
+    last = activations[-1].detach()
+    first_cka = linear_cka(emb, first)
+    last_cka = linear_cka(emb, last)
+    return {
+        "first_layer_cka": first_cka,
+        "last_layer_cka": last_cka,
+        "delta_cka": last_cka - first_cka,
+    }
+
+
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def main(cfg) -> None:
     analysis_code = cfg.analysis.code
+
+    if analysis_code in ("B-EV-1", "B-EV-2", "B-EV-4"):
+        variants = list(getattr(cfg.analysis, "variants", []) or [])
+        if analysis_code == "B-EV-1":
+            variants = variants or ["P0", "P1", "P2", "P3", "P4"]
+            rows = []
+            for run_id, run_dir, run_cfg in _iter_run_configs(cfg.paths.runs_dir):
+                if run_cfg.get("data", {}).get("name") != cfg.data.name:
+                    continue
+                if run_cfg.get("model", {}).get("variant") not in variants:
+                    continue
+                metrics, _ = load_run_metrics(run_dir)
+                cost = metrics.get("cost", {})
+                if not cost:
+                    continue
+                row = {
+                    "run_id": run_id,
+                    "variant": run_cfg.get("model", {}).get("variant"),
+                    "patch_len": _patch_len_from_cfg(run_cfg),
+                    "seed": run_cfg.get("runtime", {}).get("seed"),
+                    "metrics": {
+                        "wall_time_sec_total": cost.get("wall_time_sec_total"),
+                        "gpu_mem_peak_mb": cost.get("gpu_mem_peak_mb"),
+                        "params_count": cost.get("params_count"),
+                    },
+                }
+                rows.append(row)
+            agg = _aggregate_rows(rows, ["variant", "patch_len"], [])
+        elif analysis_code == "B-EV-2":
+            variants = variants or ["P1", "P2", "P3", "P4"]
+            rows = []
+            for run_id, run_dir, run_cfg in _iter_run_configs(cfg.paths.runs_dir):
+                if run_cfg.get("data", {}).get("name") != cfg.data.name:
+                    continue
+                if run_cfg.get("model", {}).get("variant") not in variants:
+                    continue
+                if run_cfg.get("train", {}).get("mode") != "lp":
+                    continue
+                metrics, _ = load_run_metrics(run_dir)
+                test = metrics.get("eval", {}).get("test", {})
+                if not test:
+                    continue
+                pre_cost = {}
+                ckpt_path = run_cfg.get("train", {}).get("ssl_ckpt_path") or ""
+                if ckpt_path:
+                    pre_dir = os.path.dirname(ckpt_path)
+                    if not os.path.isabs(pre_dir):
+                        pre_dir = os.path.abspath(pre_dir)
+                    pre_metrics, _ = load_run_metrics(pre_dir)
+                    pre_cost = pre_metrics.get("cost", {})
+                row = {
+                    "run_id": run_id,
+                    "variant": run_cfg.get("model", {}).get("variant"),
+                    "patch_len": _patch_len_from_cfg(run_cfg),
+                    "seed": run_cfg.get("runtime", {}).get("seed"),
+                    "metrics": {
+                        "test_mse": test.get("mse"),
+                        "test_mae": test.get("mae"),
+                        "pre_wall_time_sec_total": pre_cost.get("wall_time_sec_total"),
+                        "pre_gpu_mem_peak_mb": pre_cost.get("gpu_mem_peak_mb"),
+                        "pre_params_count": pre_cost.get("params_count"),
+                    },
+                }
+                rows.append(row)
+            agg = _aggregate_rows(rows, ["variant", "patch_len"], [])
+        else:  # B-EV-4
+            variants = variants or ["P1", "P2", "P3", "P4"]
+            rows = []
+            for run_id, run_dir, run_cfg in _iter_run_configs(cfg.paths.runs_dir):
+                if run_cfg.get("data", {}).get("name") != cfg.data.name:
+                    continue
+                if run_cfg.get("model", {}).get("variant") not in variants:
+                    continue
+                run_cfg_obj = OmegaConf.create(run_cfg)
+                metrics = _compute_cka_metrics(run_cfg_obj, run_id)
+                row = {
+                    "run_id": run_id,
+                    "variant": run_cfg.get("model", {}).get("variant"),
+                    "patch_len": _patch_len_from_cfg(run_cfg),
+                    "seed": run_cfg.get("runtime", {}).get("seed"),
+                    "metrics": metrics,
+                }
+                rows.append(row)
+            agg = _aggregate_rows(rows, ["variant", "patch_len"], [])
+
+        report_id = build_agg_id(
+            cfg.ids.agg_id,
+            dataset=cfg.data.name,
+            code=analysis_code,
+            run_ids=[],
+        )
+        out_dir = os.path.join(cfg.paths.agg_dir, report_id)
+        os.makedirs(out_dir, exist_ok=True)
+        with open(os.path.join(out_dir, "config.yaml"), "w", encoding="utf-8") as f:
+            f.write(OmegaConf.to_yaml(cfg, resolve=True))
+        with open(os.path.join(out_dir, "agg.json"), "w", encoding="utf-8") as f:
+            json.dump({"rows": rows, "agg": agg}, f, indent=2)
+        with open(os.path.join(out_dir, "status.json"), "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "state": "completed",
+                    "report_id": report_id,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+                f,
+                indent=2,
+            )
+        print(f"[analysis] report_id={report_id}")
+        print(f"[analysis] out_dir={out_dir}")
+        return
 
     if analysis_code in ("F1", "F2", "F4", "F5"):
         run_ids = _split_run_ids(cfg.analysis.on)
