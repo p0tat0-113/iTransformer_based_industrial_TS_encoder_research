@@ -171,6 +171,46 @@
 - [x] 문서화 (Quickstart + 실험 예시)
   - 메모: `/workspace/documents`에 상세 문서/튜토리얼 작성
 
+### M7. Var-MAE 리팩토링 (patch 모델 호환)
+목표: **Var‑MAE가 P0(무패치)와 P1~P4(패치 기반) 모두에서 동작**하도록 구조를 통합한다.
+
+- [x] Var‑MAE 토크나이저/경로 분리
+  - `tokenizer: auto|variate|patch` 도입 (기본 `auto`)
+  - `auto`: `model.patch.enabled` 또는 `model.variant in {P1~P4}`일 때 patch 경로 사용
+
+- [x] Patch 토큰 생성 로직 구현
+  - PatchITransformer의 토큰화 로직 재사용(또는 공용 함수로 분리)
+  - `patch_len`, `patch_mode`, `local_win`을 Var‑MAE에서도 해석
+  - P1(mean_pool)은 `patch_len=seq_len` 처리
+  - `seq_len % patch_len != 0` 시 잘라내기 규칙 명시
+
+- [x] Var‑MAE 마스킹 정책 확정
+  - 기본: **변수 단위 마스킹** 유지 (patch 경로에서는 동일 변수를 구성하는 모든 패치 토큰을 함께 마스킹)
+  - 필요 시 `mask_axis: var|token` 옵션 추가 (기본 `var`)
+
+- [x] 복원 헤드/손실 경로 정리
+  - patch 경로에서도 **원본 seq_len 기준 복원** 유지
+  - 방법: patch 토큰 → (P, N)로 reshape → patch 축 평균 → [B, N, E] → projector(seq_len)
+  - loss는 기존과 동일하게 **masked_only MSE**
+
+- [x] 메타 임베딩 정합성 (patch 경로)
+  - meta_emb가 변수 단위인 경우, **패치 토큰 수(P×N)에 맞게 반복**하여 적용
+  - P0 경로는 기존 pad/trim 로직 유지
+
+- [x] 모델/엔트리포인트 연동
+  - `itransformer.pretrain`에서 Var‑MAE가 patch 설정을 참조해도 오류 없도록 보장
+  - `ssl_ckpt_path` 로딩 시 patch_len 주입 로직과 충돌 없는지 점검
+
+- [x] Config 확장 (기본값 유지, 실험 플랜에서 override)
+  - `conf/ssl/var_mae.yaml`에 `tokenizer`, `mask_axis` (기본은 기존 동작)
+  - 실험 플랜 파일에서만 override 하도록 문서화
+
+- [x] 스모크 테스트 계획
+  - P0 + Var‑MAE: `pretrain_epochs=1` 정상 동작 확인
+  - P2 + Var‑MAE: `patch_len=8`, `local_win=2` 1 epoch 동작 확인
+  - downstream LP: Var‑MAE ckpt 로딩 + patch 모델로 1 epoch 실행
+  - 메모: CPU 모드에서 CUDA init 경고 발생했으나 실행은 정상 완료
+
 ## 3. 타깃 디렉토리 구조 (Target Layout)
 ```
 /workspace
