@@ -84,10 +84,10 @@
 - [x] B-EV-4: CKA 집계 (P1~P4 같은 모델끼리)
   - agg.json: first_layer_cka / last_layer_cka / delta_cka
 - [x] B-EV-5: 실험 취소 (실행하지 않음) — 기록/정책만 유지
-- [ ] C-RB-1/2: R1/R2 missing rate sweep을 단일 op로 실행
+- [x] C-RB-1/2: R1/R2 missing rate sweep을 단일 op로 실행
   - op_results.json: 결측률별 {mse, mae}
   - agg.json: 같은 모델(P0~P4)끼리 단순 집계
-  - 메모: sweep 저장 구현 완료, agg 집계는 미구현
+  - 메모: sweep 저장 + agg 집계 구현 완료
 
 ### M4. 평가/진단/분석
 - [x] Scenario eval (S1/S2/S3)

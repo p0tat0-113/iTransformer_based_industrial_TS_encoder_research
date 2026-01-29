@@ -305,6 +305,101 @@ def main(cfg) -> None:
         print(f"[analysis] out_dir={out_dir}")
         return
 
+    if analysis_code in ("C-RB-1", "C-RB-2"):
+        op_code = "R1" if analysis_code == "C-RB-1" else "R2"
+        variants = list(getattr(cfg.analysis, "variants", []) or []) or ["P0", "P1", "P2", "P3", "P4"]
+        group_by = list(getattr(cfg.analysis, "group_by", []) or []) or ["variant", "patch_len"]
+        rows = []
+        if os.path.isdir(cfg.paths.ops_dir):
+            for name in sorted(os.listdir(cfg.paths.ops_dir)):
+                op_dir = os.path.join(cfg.paths.ops_dir, name)
+                if not os.path.isdir(op_dir):
+                    continue
+                cfg_path = os.path.join(op_dir, "config.yaml")
+                res_path = os.path.join(op_dir, "op_results.json")
+                if not os.path.exists(cfg_path) or not os.path.exists(res_path):
+                    continue
+                try:
+                    op_cfg = OmegaConf.to_container(OmegaConf.load(cfg_path), resolve=True)
+                except Exception:
+                    continue
+                if op_cfg.get("data", {}).get("name") != cfg.data.name:
+                    continue
+                if op_cfg.get("eval", {}).get("op_code") != op_code:
+                    continue
+                if op_cfg.get("model", {}).get("variant") not in variants:
+                    continue
+                try:
+                    with open(res_path, "r", encoding="utf-8") as f:
+                        op_results = json.load(f)
+                except Exception:
+                    continue
+                metrics_by_rate = op_results.get("metrics_by_rate")
+                if not isinstance(metrics_by_rate, dict):
+                    continue
+                row = {
+                    "op_id": name,
+                    "variant": op_cfg.get("model", {}).get("variant"),
+                    "patch_len": _patch_len_from_cfg(op_cfg),
+                    "seed": op_cfg.get("runtime", {}).get("seed"),
+                    "metrics_by_rate": metrics_by_rate,
+                }
+                rows.append(row)
+
+        grouped = {}
+        for row in rows:
+            key = tuple(row.get(k) for k in group_by) if group_by else ("__all__",)
+            grouped.setdefault(key, []).append(row)
+
+        agg = []
+        for key, group_rows in grouped.items():
+            entry = {}
+            if group_by:
+                for idx, k in enumerate(group_by):
+                    entry[k] = key[idx]
+            rates = {}
+            for row in group_rows:
+                for rate, metrics in row.get("metrics_by_rate", {}).items():
+                    rates.setdefault(rate, {}).setdefault("mse", []).append(metrics.get("mse"))
+                    rates.setdefault(rate, {}).setdefault("mae", []).append(metrics.get("mae"))
+            metrics_by_rate = {}
+            for rate, vals in rates.items():
+                metrics_by_rate[rate] = {}
+                for k, series in vals.items():
+                    series = [v for v in series if isinstance(v, (int, float))]
+                    if series:
+                        mean = sum(series) / len(series)
+                        var = sum((v - mean) ** 2 for v in series) / max(1, len(series))
+                        metrics_by_rate[rate][k] = {"mean": mean, "std": var**0.5}
+            entry["metrics_by_rate"] = metrics_by_rate
+            agg.append(entry)
+
+        report_id = build_agg_id(
+            cfg.ids.agg_id,
+            dataset=cfg.data.name,
+            code=analysis_code,
+            run_ids=[],
+        )
+        out_dir = os.path.join(cfg.paths.agg_dir, report_id)
+        os.makedirs(out_dir, exist_ok=True)
+        with open(os.path.join(out_dir, "config.yaml"), "w", encoding="utf-8") as f:
+            f.write(OmegaConf.to_yaml(cfg, resolve=True))
+        with open(os.path.join(out_dir, "agg.json"), "w", encoding="utf-8") as f:
+            json.dump({"rows": rows, "agg": agg}, f, indent=2)
+        with open(os.path.join(out_dir, "status.json"), "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "state": "completed",
+                    "report_id": report_id,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+                f,
+                indent=2,
+            )
+        print(f"[analysis] report_id={report_id}")
+        print(f"[analysis] out_dir={out_dir}")
+        return
+
     if analysis_code in ("F1", "F2", "F4", "F5"):
         run_ids = _split_run_ids(cfg.analysis.on)
         if len(run_ids) != 1:
