@@ -45,23 +45,24 @@
   - 메모: `itransformer.downstream` 엔트리포인트 추가, SL/patch SL 테스트 성공
 
 ### M4. 평가/진단/분석
-- [ ] Scenario eval (S1/S2/S3)
+- [x] Scenario eval (S1/S2/S3)
   - S1: 입력에 Gaussian noise 추가 (레벨 sweep)
   - S2: 데이터 변형만 적용, sr_tag 미사용
   - S3: 입력에 scale + bias drift (레벨 sweep)
-- [ ] Diagnostics (T1/T2/T3)
+- [x] Diagnostics (T1/T2/T3)
   - T1: 센서↔메타 매칭 셔플 (A 실험군 전용)
   - T2: metadata missing sweep (A 실험군 전용)
   - T3: A1 vs A2 비교 (결합 방식별 CMP 생성)
-- [ ] Robustness (R1/R2)
+- [x] Robustness (R1/R2)
   - R1: 센서 raw 측정값 부분 결측 (값 마스킹)
   - R2: 센서 채널 자체 결측 (채널 drop/mask)
-- [ ] C-RB: SSL downstream 모델 기준 R1/R2 curve 생성
-- [ ] 분석 (F1~F5)
+- [x] C-RB: SSL downstream 모델 기준 R1/R2 curve 생성
+- [x] 분석 (F1~F5)
   - F1: 비용(시간/메모리/파라미터) 집계
   - F2: 성능-비용 trade-off
   - F4: CKA (첫/마지막 블록)
   - F5: attention map
+  - 메모: 기본 구현 완료, 스모크 테스트 미실행
 
 ### M5. 오케스트레이터
 - [ ] exp_plan.yaml 스펙 → Run/Op/CMP/AGG 생성
@@ -139,7 +140,7 @@
 - 실험군 B/C는 **메타데이터 미사용**, A에서만 사용
 
 ## 8. 다음 작업 (Next Step)
-- M4: 평가/진단/강건성/분석 파이프라인 구현
+- M5: 오케스트레이터 구현 + CMP/AGG 집계
 
 ## 9. 실험군 A 메타데이터 파이프라인(갱신)
 - 저장 포맷: `dataset/<name>/metadata.jsonl` (수동 매핑 파일 기반)
@@ -163,17 +164,17 @@
 
 ## 10. 간과/미구현 항목 정리 (exp_plan 기준)
 ### 실험군 A (메타 임베딩)
-- S1~S3 시나리오 평가 코드 미구현 → M4에 체크리스트 반영
-- T1~T3 진단 코드 미구현 → M4에 체크리스트 반영
+- S1~S3 시나리오 평가 코드 구현 완료 (M4)
+- T1~T3 진단 코드 구현 완료 (M4)
 - CMP/AGG 집계 로직 미구현 → M5에 체크리스트 반영
 
 ### 실험군 B (패칭)
 - P0~P4 구조 구현 미완 (P1~P4 필요) → M2 체크리스트에 반영
 - patch_len sweep 실행/로그 구조 미구현 → M5 체크리스트에 반영
-- F1/F2/F4/F5 분석 미구현 → M4 체크리스트 반영
+- F1/F2/F4/F5 분석 구현 완료 (M4)
 - B/C 실험군은 메타데이터 미사용
 
 ### 실험군 C (SSL)
 - C-DS: SL/FT/LP 학습 로직 미구현 → M3 체크리스트 반영
-- C-RB: R1/R2 robustness curve 평가 미구현 → M4 체크리스트 반영
+- C-RB: R1/R2 robustness curve 평가 구현 완료 (M4)
 - Patch-MAE downstream은 patch 기반 유지

@@ -3,3 +3,5 @@ code: ""
 op_code: ""
 op_hparams_tag: ""
 on_run_id: ""
+ckpt_path: ""
+op_id: ${ids.op_id}
