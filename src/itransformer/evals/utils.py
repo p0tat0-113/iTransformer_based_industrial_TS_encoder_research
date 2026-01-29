@@ -12,8 +12,12 @@ def compute_metrics(pred: torch.Tensor, true: torch.Tensor) -> Dict[str, float]:
 
 
 def parse_level(tag: str, default: float = 0.1) -> float:
-    if not tag:
+    if tag is None or tag == "":
         return default
+    if isinstance(tag, (int, float)):
+        return float(tag)
+    if not isinstance(tag, str):
+        tag = str(tag)
     t = tag.lower().strip()
     if t in ("l1", "level1"):
         return 0.05

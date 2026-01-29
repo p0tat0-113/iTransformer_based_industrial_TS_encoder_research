@@ -163,6 +163,7 @@
 - [x] 산출물 스키마 혼합 방지 장치
   - op_results/cmp/agg에 run.code/exp_group 등 식별 필드 기록
   - analysis 집계 시 **실험군 간 결과 혼합 방지 필터** 기본 적용
+  - 메모: A/B/C 스모크 실행 완료, op_hparams float 처리 및 time-feature meta padding, P0 baseline(패치 없음/patch_len=none) 반영
 
 ### M6. 정리
 - [ ] legacy 코드 삭제

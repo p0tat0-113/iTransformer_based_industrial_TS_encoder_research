@@ -76,6 +76,19 @@ class VarMAE(nn.Module):
             return enc_out
         if meta_emb.dim() == 2:
             meta_emb = meta_emb.unsqueeze(0).expand(enc_out.size(0), -1, -1)
+        if meta_emb.size(1) != enc_out.size(1):
+            if meta_emb.size(1) < enc_out.size(1):
+                pad_len = enc_out.size(1) - meta_emb.size(1)
+                pad = torch.zeros(
+                    meta_emb.size(0),
+                    pad_len,
+                    meta_emb.size(2),
+                    device=meta_emb.device,
+                    dtype=meta_emb.dtype,
+                )
+                meta_emb = torch.cat([meta_emb, pad], dim=1)
+            else:
+                meta_emb = meta_emb[:, : enc_out.size(1), :]
         meta_emb = self.meta_proj(meta_emb)
         if self.meta_mode == "add":
             return enc_out + meta_emb

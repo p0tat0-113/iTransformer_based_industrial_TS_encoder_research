@@ -50,6 +50,8 @@ def _predict(model, x_enc, x_mark, meta_emb):
 def _parse_downsample(tag: str, default: int = 2) -> int:
     if not tag:
         return default
+    if not isinstance(tag, str):
+        tag = str(tag)
     t = tag.lower().strip()
     if t.startswith("d"):
         t = t[1:]

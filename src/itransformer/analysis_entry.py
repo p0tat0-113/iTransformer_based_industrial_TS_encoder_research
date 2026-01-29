@@ -107,6 +107,9 @@ def _iter_run_configs(runs_dir: str):
 
 
 def _patch_len_from_cfg(cfg_dict: dict):
+    variant = cfg_dict.get("model", {}).get("variant")
+    if variant == "P0":
+        return "none"
     patch = cfg_dict.get("model", {}).get("patch", {})
     patch_len = patch.get("patch_len")
     mode = patch.get("mode")
@@ -248,7 +251,7 @@ def main(cfg) -> None:
                 rows.append(row)
             agg = _aggregate_rows(rows, ["variant", "patch_len"], [])
         elif analysis_code == "B-EV-2":
-            variants = variants or ["P1", "P2", "P3", "P4"]
+            variants = variants or ["P0", "P1", "P2", "P3", "P4"]
             rows = []
             for run_id, run_dir, run_cfg in _iter_run_configs(cfg.paths.runs_dir):
                 if run_cfg.get("data", {}).get("name") != cfg.data.name:
@@ -289,7 +292,7 @@ def main(cfg) -> None:
                 rows.append(row)
             agg = _aggregate_rows(rows, ["variant", "patch_len"], [])
         else:  # B-EV-4
-            variants = variants or ["P1", "P2", "P3", "P4"]
+            variants = variants or ["P0", "P1", "P2", "P3", "P4"]
             rows = []
             for run_id, run_dir, run_cfg in _iter_run_configs(cfg.paths.runs_dir):
                 if run_cfg.get("data", {}).get("name") != cfg.data.name:
