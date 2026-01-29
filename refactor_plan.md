@@ -112,9 +112,31 @@
   - 메모: 기본 구현 완료, 스모크 테스트 미실행
 
 ### M5. 오케스트레이터
-- [ ] exp_plan.yaml 스펙 → Run/Op/CMP/AGG 생성
-- [ ] DAG 기반 실행 (train → eval → analysis)
-- [ ] resume/skip 지원
+- [x] exp_plan.yaml 스펙 정의
+  - 위치: `conf/plan/exp_plan.yaml`
+  - 스키마: datasets, runs, ops, cmp, agg, sweep 규칙(seed/patch_len 등)
+  - 최소 예시 포함
+- [x] Plan 로더/검증기
+  - `src/itransformer/orchestrator/plan.py`
+  - 필수 필드/타입 검증 (dataset/variant/op_code 등)
+- [x] 스펙 생성기 (Run/Op/CMP/AGG)
+  - `src/itransformer/orchestrator/spec_builder.py`
+  - exp_plan → 실행 스펙(JSON/YAML)으로 변환
+  - 산출 위치: `artifacts/plans/<plan_id>/specs/*.json`
+- [x] DAG 실행기
+  - `src/itransformer/orchestrator/executor.py`
+  - 의존성: Run → Op → CMP/AGG
+  - Hydra entrypoint를 subprocess로 호출
+  - 실행 로그: `artifacts/plans/<plan_id>/logs/<spec_id>.log`
+- [x] resume/skip 지원
+  - status.json 기반 재실행 스킵
+  - 실패 시 재시도/강제 재실행 옵션
+- [x] CLI 엔트리포인트
+  - `python -m itransformer.orchestrator.run plan=<path>`
+  - 옵션: `--resume`, `--only=run|op|cmp|agg`, `--filter`(dataset/variant)
+- [x] 스모크 테스트
+  - 최소 plan으로 1개 dataset/1개 run/op/cmp/agg 실행 확인
+  - 메모: /tmp/plan_smoke.yaml로 OP/CMP/AGG 1회씩 성공
 
 ### M6. 정리
 - [ ] legacy 코드 삭제

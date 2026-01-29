@@ -8,6 +8,7 @@ defaults:
   - optim: adam
   - eval: base
   - analysis: none
+  - plan: default
   - runtime: gpu
   - paths: default
   - ids: default

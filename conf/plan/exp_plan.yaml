@@ -1,0 +1,27 @@
+plan_id: demo_plan
+
+runs: []
+ops: []
+cmps: []
+aggs: []
+
+# Example:
+# runs:
+#   - id_template: "B-TR.{data}.{variant}.pl{patch_len}.sd{seed}"
+#     entry: pretrain
+#     overrides:
+#       - data={data}
+#       - model={variant}
+#       - ssl=patch_mae
+#       - ssl.patch_len={patch_len}
+#       - ssl.pretrain_epochs=1
+#       - metadata.enabled=false
+#       - runtime.device=cpu
+#       - runtime.seed={seed}
+#       - train.num_workers=0
+#       - run.id={id}
+#     sweep:
+#       data: [ETTh1]
+#       variant: [P1, P2]
+#       patch_len: [8, 16]
+#       seed: [0, 1]
