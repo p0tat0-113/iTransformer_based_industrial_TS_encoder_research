@@ -274,7 +274,7 @@ aggs:
   # -------------------------
   # B-EV-2: trade-off (Mix pretrain, run_code filtered)
   # -------------------------
-  - id_template: "AGG.ETTh1.B-EV-2__ON=Mix"
+  - id: "AGG.ETTh1.B-EV-2__ON=Mix"
     entry: analysis
     overrides:
       - data=ETTh1

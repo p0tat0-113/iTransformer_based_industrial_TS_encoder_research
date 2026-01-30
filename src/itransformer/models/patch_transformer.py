@@ -18,8 +18,6 @@ class PatchITransformer(nn.Module):
         self.patch_mode = cfg.model.patch.mode
         self.local_win = cfg.model.patch.local_win
         patch_len = int(cfg.model.patch.patch_len)
-        if self.patch_mode == "mean_pool":
-            patch_len = self.seq_len
         if patch_len <= 0:
             raise ValueError("model.patch.patch_len must be set for patch modes")
         self.patch_len = patch_len

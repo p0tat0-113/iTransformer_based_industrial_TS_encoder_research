@@ -20,8 +20,6 @@ class PatchMAE(nn.Module):
         self.meta_enabled = bool(getattr(cfg.model.meta, "enabled", False))
         self.meta_mode = getattr(cfg.model.meta, "mode", "none")
 
-        if self.patch_mode == "mean_pool":
-            self.patch_len = self.seq_len
         self.patch_count = self.seq_len // self.patch_len
         if self.patch_count <= 0:
             raise ValueError("patch_len must be <= seq_len")

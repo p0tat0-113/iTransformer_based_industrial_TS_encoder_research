@@ -5,4 +5,5 @@ pretrain_epochs: 10
 patch_len: 0
 tokenizer: auto   # auto | variate | patch
 mask_axis: var    # var | token
+patch_mixer: mlp  # mlp | none
 loss: mse

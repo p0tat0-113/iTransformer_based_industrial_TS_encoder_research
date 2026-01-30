@@ -3,8 +3,59 @@ import torch.nn as nn
 
 from itransformer.models.layers.attention import AttentionLayer, FullAttention
 from itransformer.models.layers.embed import DataEmbeddingInverted
-from itransformer.models.layers.transformer import Encoder, EncoderLayer
 from itransformer.models.patch_utils import build_patch_attn_mask
+
+
+class PatchMixer(nn.Module):
+    def __init__(self, patch_count: int, mode: str = "mlp", dropout: float = 0.0):
+        super().__init__()
+        self.patch_count = patch_count
+        self.mode = mode
+        if mode == "mlp":
+            self.proj = nn.Sequential(
+                nn.Linear(patch_count, patch_count),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(patch_count, patch_count),
+            )
+        else:
+            raise ValueError(f"Unsupported patch_mixer mode: {mode}")
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [B, P*N, E]
+        bsz, token_count, emb = x.shape
+        if token_count % self.patch_count != 0:
+            raise ValueError("PatchMixer: token_count not divisible by patch_count")
+        n_vars = token_count // self.patch_count
+        x = x.reshape(bsz, self.patch_count, n_vars, emb)
+        x = x.permute(0, 2, 3, 1)  # [B, N, E, P]
+        x = self.proj(x)
+        x = x.permute(0, 3, 1, 2).contiguous()
+        return x.reshape(bsz, token_count, emb)
+
+
+class VarMAEEncoderLayer(nn.Module):
+    def __init__(self, attention, d_model, d_ff=None, dropout=0.1, activation="relu", patch_mixer=None):
+        super().__init__()
+        d_ff = d_ff or 4 * d_model
+        self.attention = attention
+        self.conv1 = nn.Conv1d(in_channels=d_model, out_channels=d_ff, kernel_size=1)
+        self.conv2 = nn.Conv1d(in_channels=d_ff, out_channels=d_model, kernel_size=1)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+        self.activation = nn.GELU() if activation == "gelu" else nn.ReLU()
+        self.patch_mixer = patch_mixer
+
+    def forward(self, x, attn_mask=None):
+        new_x, attn = self.attention(x, x, x, attn_mask=attn_mask)
+        x = x + self.dropout(new_x)
+        if self.patch_mixer is not None:
+            x = x + self.dropout(self.patch_mixer(x))
+        y = self.norm1(x)
+        y = self.dropout(self.activation(self.conv1(y.transpose(-1, 1))))
+        y = self.dropout(self.conv2(y).transpose(-1, 1))
+        return self.norm2(x + y), attn
 
 
 class VarMAE(nn.Module):
@@ -41,8 +92,6 @@ class VarMAE(nn.Module):
             patch_len = int(getattr(cfg.model.patch, "patch_len", 0) or 0)
             if patch_len <= 0:
                 patch_len = int(getattr(cfg.ssl, "patch_len", 0) or 0)
-            if self.patch_mode == "mean_pool":
-                patch_len = self.seq_len
             if patch_len <= 0:
                 raise ValueError("patch_len must be set for patch tokenizer")
             self.patch_len = patch_len
@@ -86,12 +135,14 @@ class VarMAE(nn.Module):
             else:
                 self.meta_fuse = None
 
-        self.encoder = Encoder(
+        patch_mixer_mode = getattr(cfg.ssl, "patch_mixer", "mlp")
+        self.attn_mask_flag = self.use_patch and self.patch_mode in ("same_time", "local")
+        self.encoder_layers = nn.ModuleList(
             [
-                EncoderLayer(
+                VarMAEEncoderLayer(
                     AttentionLayer(
                         FullAttention(
-                            mask_flag=False,
+                            mask_flag=self.attn_mask_flag,
                             attention_dropout=cfg.model.dropout,
                             output_attention=False,
                         ),
@@ -102,11 +153,16 @@ class VarMAE(nn.Module):
                     cfg.model.d_ff,
                     dropout=cfg.model.dropout,
                     activation=cfg.model.activation,
+                    patch_mixer=(
+                        PatchMixer(self.patch_count, mode=patch_mixer_mode, dropout=cfg.model.dropout)
+                        if self.use_patch and patch_mixer_mode != "none"
+                        else None
+                    ),
                 )
                 for _ in range(cfg.model.e_layers)
-            ],
-            norm_layer=nn.LayerNorm(cfg.model.d_model),
+            ]
         )
+        self.encoder_norm = nn.LayerNorm(cfg.model.d_model)
         self.projector = nn.Linear(cfg.model.d_model, cfg.data.seq_len, bias=True)
 
     def _apply_meta(self, enc_out, meta_emb, n_vars: int | None = None):
@@ -172,7 +228,9 @@ class VarMAE(nn.Module):
 
             enc_out = self.enc_embedding(x_masked, x_mark)
             enc_out = self._apply_meta(enc_out, meta_emb)
-            enc_out, _ = self.encoder(enc_out, attn_mask=None)
+            for layer in self.encoder_layers:
+                enc_out, _ = layer(enc_out, attn_mask=None)
+            enc_out = self.encoder_norm(enc_out)
             recon = self.projector(enc_out).permute(0, 2, 1)[:, :, :n_vars]
             usable_len = x_enc.size(1)
         else:
@@ -199,7 +257,9 @@ class VarMAE(nn.Module):
                 self.local_win,
                 x_enc.device,
             )
-            enc_out, _ = self.encoder(enc_out, attn_mask=attn_mask)
+            for layer in self.encoder_layers:
+                enc_out, _ = layer(enc_out, attn_mask=attn_mask)
+            enc_out = self.encoder_norm(enc_out)
             enc_out = enc_out.reshape(bsz, self.patch_count, n_vars, -1).mean(dim=1)
             recon = self.projector(enc_out).permute(0, 2, 1)
 
