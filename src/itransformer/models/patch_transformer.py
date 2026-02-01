@@ -26,6 +26,33 @@ class PatchITransformer(nn.Module):
             raise ValueError("patch_len must be <= seq_len")
 
         self.patch_embed = nn.Linear(self.patch_len, cfg.model.d_model)
+        self.meta_enabled = bool(getattr(cfg.model.meta, "enabled", False))
+        self.meta_mode = getattr(cfg.model.meta, "mode", "none")
+
+        if self.meta_enabled:
+            meta_dim = cfg.metadata.embedding.dim
+            proj = getattr(cfg.model.meta, "proj", "linear")
+            if proj == "mlp":
+                hidden = getattr(cfg.model.meta, "mlp_hidden", cfg.model.d_model)
+                self.meta_proj = nn.Sequential(
+                    nn.Linear(meta_dim, hidden),
+                    nn.GELU(),
+                    nn.Linear(hidden, cfg.model.d_model),
+                )
+            else:
+                self.meta_proj = nn.Linear(meta_dim, cfg.model.d_model)
+
+            if self.meta_mode == "concat":
+                self.meta_fuse = nn.Linear(cfg.model.d_model * 2, cfg.model.d_model)
+            elif self.meta_mode == "fusion":
+                hidden = getattr(cfg.model.meta, "mlp_hidden", cfg.model.d_model)
+                self.meta_fuse = nn.Sequential(
+                    nn.Linear(cfg.model.d_model * 2, hidden),
+                    nn.GELU(),
+                    nn.Linear(hidden, cfg.model.d_model),
+                )
+            else:
+                self.meta_fuse = None
         self.encoder = Encoder(
             [
                 EncoderLayer(
@@ -48,6 +75,26 @@ class PatchITransformer(nn.Module):
             norm_layer=nn.LayerNorm(cfg.model.d_model),
         )
         self.projector = nn.Linear(cfg.model.d_model, cfg.data.pred_len, bias=True)
+        self.projector_patch = nn.Linear(
+            self.patch_count * cfg.model.d_model,
+            cfg.data.pred_len,
+            bias=True,
+        )
+
+    def _apply_meta(self, enc_out, meta_emb, *, repeat_patches: bool):
+        if meta_emb is None or not self.meta_enabled or self.meta_mode == "none":
+            return enc_out
+        if meta_emb.dim() == 2:
+            meta_emb = meta_emb.unsqueeze(0).expand(enc_out.size(0), -1, -1)
+        if repeat_patches:
+            meta_emb = meta_emb.repeat_interleave(self.patch_count, dim=1)
+        meta_emb = self.meta_proj(meta_emb)
+        if self.meta_mode == "add":
+            return enc_out + meta_emb
+        if self.meta_mode in ("concat", "fusion"):
+            fused = torch.cat([enc_out, meta_emb], dim=-1)
+            return self.meta_fuse(fused)
+        return enc_out
 
     def forward(self, x_enc, x_mark=None, meta_emb=None):
         if self.use_norm:
@@ -73,17 +120,21 @@ class PatchITransformer(nn.Module):
 
         if self.patch_mode == "mean_pool":
             tokens = patch_emb.mean(dim=1)  # [B, N, E]
+            tokens = self._apply_meta(tokens, meta_emb, repeat_patches=False)
             if time_emb is not None:
                 time_tokens = time_emb.mean(dim=1)  # [B, T, E]
                 tokens = torch.cat([tokens, time_tokens], dim=1)
             attn_mask = None
         else:
             total_vars = n_vars + time_vars
+            data_tokens = patch_emb.reshape(bsz, self.patch_count * n_vars, -1)
+            data_tokens = self._apply_meta(data_tokens, meta_emb, repeat_patches=True)
+            data_tokens = data_tokens.reshape(bsz, self.patch_count, n_vars, -1)
             if time_emb is not None:
-                combined = torch.cat([patch_emb, time_emb], dim=2)  # [B, P, N+T, E]
+                combined = torch.cat([data_tokens, time_emb], dim=2)  # [B, P, N+T, E]
                 tokens = combined.reshape(bsz, self.patch_count * total_vars, -1)
             else:
-                tokens = patch_emb.reshape(bsz, self.patch_count * n_vars, -1)
+                tokens = data_tokens.reshape(bsz, self.patch_count * n_vars, -1)
             attn_mask = build_patch_attn_mask(
                 self.patch_count,
                 total_vars,
@@ -95,14 +146,18 @@ class PatchITransformer(nn.Module):
         enc_out, _ = self.encoder(tokens, attn_mask=attn_mask)
         if self.patch_mode == "mean_pool":
             enc_out = enc_out[:, :n_vars, :]
-        if self.patch_mode != "mean_pool":
+            pooled = enc_out  # [B, N, E]
+            dec_out = self.projector(pooled).permute(0, 2, 1)
+        else:
             if time_emb is not None:
                 enc_out = enc_out.reshape(bsz, self.patch_count, total_vars, -1)[:, :, :n_vars, :]
             else:
                 enc_out = enc_out.reshape(bsz, self.patch_count, n_vars, -1)
-            enc_out = enc_out.mean(dim=1)
-        pooled = enc_out  # [B, N, E]
-        dec_out = self.projector(pooled).permute(0, 2, 1)
+            # concatenate patches in temporal order for each variable
+            enc_out = enc_out.permute(0, 2, 1, 3).reshape(
+                bsz, n_vars, self.patch_count * enc_out.size(-1)
+            )
+            dec_out = self.projector_patch(enc_out).permute(0, 2, 1)
 
         if self.use_norm:
             dec_out = dec_out * stdev[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1)

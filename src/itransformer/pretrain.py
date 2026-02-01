@@ -107,6 +107,21 @@ def main(cfg) -> None:
 
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.optim.lr)
+    scheduler = None
+    scheduler_name = str(getattr(cfg.optim, "scheduler", "none") or "none").lower()
+    if scheduler_name != "none":
+        if scheduler_name == "cosine":
+            t_max = int(getattr(cfg.optim, "t_max", 0) or 0)
+            if t_max <= 0:
+                t_max = int(cfg.ssl.pretrain_epochs)
+            min_lr = float(getattr(cfg.optim, "min_lr", 0.0) or 0.0)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                T_max=t_max,
+                eta_min=min_lr,
+            )
+        else:
+            raise ValueError(f"Unsupported optim.scheduler: {scheduler_name}")
 
     patience = int(getattr(cfg.train, "patience", 0) or 0)
     best_val = float("inf")
@@ -167,6 +182,8 @@ def main(cfg) -> None:
         val_loss_curve.append(val_loss)
         grad_norm_curve.append(sum(epoch_grad_norms) / max(1, len(epoch_grad_norms)))
         lr_curve.append(float(optimizer.param_groups[0]["lr"]))
+        if scheduler is not None:
+            scheduler.step()
 
         epoch_time = time.perf_counter() - epoch_start
         epoch_times.append(epoch_time)

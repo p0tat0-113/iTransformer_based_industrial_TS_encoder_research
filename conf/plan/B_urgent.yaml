@@ -1,11 +1,5 @@
 plan_id: B_urgent
 
-# Urgent B plan: Mix(ETTh1+Exchange) pretrain + LP on ETTh1
-# - variants: P0 + P1~P4
-# - patch_len: 8
-# - epochs: 10
-# - seed: 0
-
 runs:
   # -------------------------
   # Pretrain (Mix, Var-MAE baseline: P0)
@@ -17,8 +11,13 @@ runs:
       - data.mix.sample_mode=balanced
       - model=P0
       - ssl=var_mae
-      - ssl.mask_ratio=0.5
-      - ssl.pretrain_epochs=30
+      - ssl.mask_ratio=0.2
+      - ssl.pretrain_epochs=25
+      - optim.lr=0.0005
+      - optim.weight_decay=0.01
+      - optim.scheduler=cosine
+      - optim.min_lr=0.000001
+      - optim.t_max=25
       - train.patience=0
       - metadata.enabled=false
       - runtime.device=cuda
@@ -29,7 +28,37 @@ runs:
     sweep:
       seed: [0]
 
-  # Pretrain (Mix, Patch-MAE: P1~P4)
+  # Pretrain (Mix, Var-MAE: P1)
+  # -------------------------
+  - id_template: "B-URG-TR.Mix.P1.pl{patch_len}.sd{seed}"
+    entry: pretrain
+    overrides:
+      - data=Mix
+      - data.mix.datasets=[ETTh1,Exchange]
+      - data.mix.sample_mode=balanced
+      - model=P1
+      - model.patch.patch_len={patch_len}
+      - ssl=var_mae
+      - ssl.mask_ratio=0.2
+      - ssl.patch_len={patch_len}
+      - ssl.pretrain_epochs=25
+      - optim.lr=0.0005
+      - optim.weight_decay=0.01
+      - optim.scheduler=cosine
+      - optim.min_lr=0.000001
+      - optim.t_max=25
+      - train.patience=0
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - run.code=B-URG-TR
+      - run.hparams_tag=pl{patch_len}
+      - run.id={id}
+    sweep:
+      patch_len: [8]
+      seed: [0]
+
+  # Pretrain (Mix, Patch-MAE: P2~P4)
   # -------------------------
   - id_template: "B-URG-TR.Mix.{variant}.pl{patch_len}.sd{seed}"
     entry: pretrain
@@ -41,9 +70,14 @@ runs:
       - model.patch.patch_len={patch_len}
       - model.patch.local_win=1
       - ssl=patch_mae
-      - ssl.mask_ratio=0.5
+      - ssl.mask_ratio=0.2
       - ssl.patch_len={patch_len}
-      - ssl.pretrain_epochs=30
+      - ssl.pretrain_epochs=25
+      - optim.lr=0.0005
+      - optim.weight_decay=0.01
+      - optim.scheduler=cosine
+      - optim.min_lr=0.000001
+      - optim.t_max=25
       - train.patience=0
       - metadata.enabled=false
       - runtime.device=cuda
@@ -52,7 +86,7 @@ runs:
       - run.hparams_tag=pl{patch_len}
       - run.id={id}
     sweep:
-      variant: [P1, P2, P3, P4]
+      variant: [P2, P3, P4]
       patch_len: [8]
       seed: [0]
 
@@ -69,6 +103,9 @@ runs:
       - train.epochs=20
       - train.batch_size=32
       - optim.lr=0.0001
+      - optim.scheduler=cosine
+      - optim.min_lr=0.000001
+      - optim.t_max=20
       - train.ssl_ckpt_path=./artifacts/runs/B-URG-TR.Mix.P0.plnone.sd{seed}/pretrain_checkpoint.pt
       - metadata.enabled=false
       - runtime.device=cuda
@@ -91,6 +128,9 @@ runs:
       - train.epochs=20
       - train.batch_size=32
       - optim.lr=0.0001
+      - optim.scheduler=cosine
+      - optim.min_lr=0.000001
+      - optim.t_max=20
       - train.ssl_ckpt_path=./artifacts/runs/B-URG-TR.Mix.{variant}.pl{patch_len}.sd{seed}/pretrain_checkpoint.pt
       - metadata.enabled=false
       - runtime.device=cuda

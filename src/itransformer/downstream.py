@@ -91,6 +91,8 @@ def _load_ssl_checkpoint(model, path: str) -> dict:
     state = ckpt.get("state_dict", ckpt)
     filtered, skipped = _remap_ssl_state(model, state)
     missing, unexpected = model.load_state_dict(filtered, strict=False)
+    print(f"[downstream] ssl_ckpt_path: {path}")
+    print(f"[downstream] remapped keys: {len(filtered)} / raw keys: {len(state)}")
     if missing:
         print(f"[downstream] missing keys: {missing[:5]}{'...' if len(missing)>5 else ''}")
     if unexpected:
@@ -139,6 +141,13 @@ def _load_ssl_checkpoint(model, path: str) -> dict:
     if skipped["missing_keys"]:
         print(
             f"[downstream] unmapped keys (first 5): {skipped['missing_keys'][:5]}"
+        )
+    patch_embed = getattr(model, "patch_embed", None)
+    if patch_embed is not None:
+        weight = patch_embed.weight.detach().float()
+        print(
+            f"[downstream] patch_embed stats: mean={weight.mean().item():.6f} "
+            f"std={weight.std().item():.6f}"
         )
     return {
         "missing": missing,
@@ -256,6 +265,21 @@ def main(cfg) -> None:
             freeze_modules = [model.value_proj, model.encoder]
 
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=cfg.optim.lr)
+    scheduler = None
+    scheduler_name = str(getattr(cfg.optim, "scheduler", "none") or "none").lower()
+    if scheduler_name != "none":
+        if scheduler_name == "cosine":
+            t_max = int(getattr(cfg.optim, "t_max", 0) or 0)
+            if t_max <= 0:
+                t_max = int(cfg.train.epochs)
+            min_lr = float(getattr(cfg.optim, "min_lr", 0.0) or 0.0)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                T_max=t_max,
+                eta_min=min_lr,
+            )
+        else:
+            raise ValueError(f"Unsupported optim.scheduler: {scheduler_name}")
     criterion = torch.nn.MSELoss()
 
     patience = int(getattr(cfg.train, "patience", 0) or 0)
@@ -331,6 +355,8 @@ def main(cfg) -> None:
         val_loss_curve.append(val_loss)
         grad_norm_curve.append(sum(epoch_grad_norms) / max(1, len(epoch_grad_norms)))
         lr_curve.append(float(optimizer.param_groups[0]["lr"]))
+        if scheduler is not None:
+            scheduler.step()
 
         epoch_time = time.perf_counter() - epoch_start
         epoch_times.append(epoch_time)
