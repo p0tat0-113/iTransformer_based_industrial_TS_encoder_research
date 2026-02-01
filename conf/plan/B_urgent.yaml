@@ -1,14 +1,35 @@
 plan_id: B_urgent
 
 # Urgent B plan: Mix(ETTh1+Exchange) pretrain + LP on ETTh1
-# - variants: P1~P4
+# - variants: P0 + P1~P4
 # - patch_len: 16
 # - epochs: 10
 # - seed: 0
 
 runs:
   # -------------------------
-  # Pretrain (Mix, Var-MAE)
+  # Pretrain (Mix, Var-MAE baseline: P0)
+  - id_template: "B-URG-TR.Mix.P0.plnone.sd{seed}"
+    entry: pretrain
+    overrides:
+      - data=Mix
+      - data.mix.datasets=[ETTh1,Exchange]
+      - data.mix.sample_mode=balanced
+      - model=P0
+      - ssl=var_mae
+      - ssl.mask_ratio=0.5
+      - ssl.pretrain_epochs=30
+      - train.patience=0
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - run.code=B-URG-TR
+      - run.hparams_tag=plnone
+      - run.id={id}
+    sweep:
+      seed: [0]
+
+  # Pretrain (Mix, Patch-MAE: P1~P4)
   # -------------------------
   - id_template: "B-URG-TR.Mix.{variant}.pl{patch_len}.sd{seed}"
     entry: pretrain
@@ -19,9 +40,10 @@ runs:
       - model={variant}
       - model.patch.patch_len={patch_len}
       - model.patch.local_win=2
-      - ssl=var_mae
+      - ssl=patch_mae
       - ssl.mask_ratio=0.5
-      - ssl.pretrain_epochs=10
+      - ssl.patch_len={patch_len}
+      - ssl.pretrain_epochs=30
       - train.patience=0
       - metadata.enabled=false
       - runtime.device=cuda
@@ -37,6 +59,26 @@ runs:
   # -------------------------
   # Downstream LP (ETTh1)
   # -------------------------
+  - id_template: "B-URG-DS.ETTh1.P0.plnone.sd{seed}"
+    entry: downstream
+    overrides:
+      - data=ETTh1
+      - model=P0
+      - train=downstream
+      - train.mode=lp
+      - train.epochs=20
+      - train.batch_size=32
+      - optim.lr=0.0001
+      - train.ssl_ckpt_path=./artifacts/runs/B-URG-TR.Mix.P0.plnone.sd{seed}/pretrain_checkpoint.pt
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - run.code=B-URG-DS
+      - run.hparams_tag=plnone
+      - run.id={id}
+    sweep:
+      seed: [0]
+
   - id_template: "B-URG-DS.ETTh1.{variant}.pl{patch_len}.sd{seed}"
     entry: downstream
     overrides:
@@ -46,7 +88,7 @@ runs:
       - model.patch.local_win=2
       - train=downstream
       - train.mode=lp
-      - train.epochs=10
+      - train.epochs=20
       - train.batch_size=32
       - optim.lr=0.0001
       - train.ssl_ckpt_path=./artifacts/runs/B-URG-TR.Mix.{variant}.pl{patch_len}.sd{seed}/pretrain_checkpoint.pt
@@ -63,4 +105,26 @@ runs:
 
 ops: []
 cmps: []
-aggs: []
+
+aggs:
+  # -------------------------
+  # B-EV-2: trade-off (ETTh1 downstream)
+  # -------------------------
+  - id: "AGG.ETTh1.B-EV-2__ON=Mix"
+    entry: analysis
+    overrides:
+      - data=ETTh1
+      - analysis.code=B-EV-2
+      - analysis.run_codes=[B-URG-DS]
+      - runtime.device=cuda
+
+  # -------------------------
+  # B-EV-4: CKA (Mix pretrain)
+  # -------------------------
+  - id: "AGG.Mix.B-EV-4__ON="
+    entry: analysis
+    overrides:
+      - data=Mix
+      - analysis.code=B-EV-4
+      - analysis.run_code_prefixes=[B-URG-TR]
+      - runtime.device=cuda

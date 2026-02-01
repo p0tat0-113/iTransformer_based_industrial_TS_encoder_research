@@ -25,7 +25,7 @@ class PatchITransformer(nn.Module):
         if self.patch_count <= 0:
             raise ValueError("patch_len must be <= seq_len")
 
-        self.value_proj = nn.Linear(1, cfg.model.d_model)
+        self.patch_embed = nn.Linear(self.patch_len, cfg.model.d_model)
         self.encoder = Encoder(
             [
                 EncoderLayer(
@@ -60,22 +60,26 @@ class PatchITransformer(nn.Module):
         usable_len = self.patch_count * self.patch_len
         x_enc = x_enc[:, :usable_len, :]
         patches = x_enc.reshape(bsz, self.patch_count, self.patch_len, n_vars)
-        patch_mean = patches.mean(dim=2)  # [B, P, N]
+        patches = patches.permute(0, 1, 3, 2)  # [B, P, N, patch_len]
+        patch_emb = self.patch_embed(patches)  # [B, P, N, E]
 
-        tokens = patch_mean.reshape(bsz, self.patch_count * n_vars, 1)
-        enc_out = self.value_proj(tokens)
+        if self.patch_mode == "mean_pool":
+            tokens = patch_emb.mean(dim=1)  # [B, N, E]
+            attn_mask = None
+        else:
+            tokens = patch_emb.reshape(bsz, self.patch_count * n_vars, -1)
+            attn_mask = build_patch_attn_mask(
+                self.patch_count,
+                n_vars,
+                self.patch_mode,
+                self.local_win,
+                x_enc.device,
+            )
 
-        attn_mask = build_patch_attn_mask(
-            self.patch_count,
-            n_vars,
-            self.patch_mode,
-            self.local_win,
-            x_enc.device,
-        )
-        enc_out, _ = self.encoder(enc_out, attn_mask=attn_mask)
-
-        enc_out = enc_out.reshape(bsz, self.patch_count, n_vars, -1)
-        pooled = enc_out.mean(dim=1)  # [B, N, E]
+        enc_out, _ = self.encoder(tokens, attn_mask=attn_mask)
+        if self.patch_mode != "mean_pool":
+            enc_out = enc_out.reshape(bsz, self.patch_count, n_vars, -1).mean(dim=1)
+        pooled = enc_out  # [B, N, E]
         dec_out = self.projector(pooled).permute(0, 2, 1)
 
         if self.use_norm:

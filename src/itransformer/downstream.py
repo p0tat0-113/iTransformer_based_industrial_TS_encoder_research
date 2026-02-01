@@ -36,10 +36,29 @@ def _freeze_modules(modules, freeze: bool) -> None:
             param.requires_grad = not freeze
 
 
+def _remap_ssl_state(model, state: dict) -> dict:
+    target_state = model.state_dict()
+    target_keys = set(target_state.keys())
+    remapped = {}
+    for key, value in state.items():
+        if key.startswith("projector."):
+            continue
+        new_key = key
+        if key.startswith("encoder_layers."):
+            new_key = "encoder.attn_layers." + key[len("encoder_layers.") :]
+        elif key.startswith("encoder_norm."):
+            new_key = "encoder.norm." + key[len("encoder_norm.") :]
+        elif key.startswith("value_proj.") and hasattr(model, "patch_embed"):
+            new_key = "patch_embed." + key[len("value_proj.") :]
+        if new_key in target_keys and target_state[new_key].shape == value.shape:
+            remapped[new_key] = value
+    return remapped
+
+
 def _load_ssl_checkpoint(model, path: str) -> None:
     ckpt = torch.load(path, map_location="cpu")
     state = ckpt.get("state_dict", ckpt)
-    filtered = {k: v for k, v in state.items() if not k.startswith("projector.")}
+    filtered = _remap_ssl_state(model, state)
     missing, unexpected = model.load_state_dict(filtered, strict=False)
     if missing:
         print(f"[downstream] missing keys: {missing[:5]}{'...' if len(missing)>5 else ''}")
@@ -62,9 +81,6 @@ def _maybe_inject_patch_len(cfg, ckpt_path: str) -> None:
     ckpt_patch_mode = patch_cfg.get("mode") or ckpt_cfg.get("ssl", {}).get("patch_mode")
 
     if not hasattr(cfg.model, "patch"):
-        return
-    if getattr(cfg.model.patch, "mode", "") == "mean_pool":
-        cfg.model.patch.patch_len = cfg.data.seq_len
         return
     if getattr(cfg.model.patch, "patch_len", 0) in (0, None) and ckpt_patch_len:
         cfg.model.patch.patch_len = ckpt_patch_len
@@ -145,7 +161,11 @@ def main(cfg) -> None:
         freeze_modules = [model.enc_embedding, model.encoder]
     else:
         # patch model
-        freeze_modules = [model.value_proj, model.encoder]
+        patch_embed = getattr(model, "patch_embed", None)
+        if patch_embed is not None:
+            freeze_modules = [patch_embed, model.encoder]
+        else:
+            freeze_modules = [model.value_proj, model.encoder]
 
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=cfg.optim.lr)
     criterion = torch.nn.MSELoss()

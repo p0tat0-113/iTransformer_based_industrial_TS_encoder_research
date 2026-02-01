@@ -98,7 +98,7 @@ class VarMAE(nn.Module):
             self.patch_count = self.seq_len // self.patch_len
             if self.patch_count <= 0:
                 raise ValueError("patch_len must be <= seq_len")
-            self.value_proj = nn.Linear(1, cfg.model.d_model)
+            self.patch_embed = nn.Linear(self.patch_len, cfg.model.d_model)
         else:
             self.patch_mode = "none"
             self.local_win = 0
@@ -155,7 +155,7 @@ class VarMAE(nn.Module):
                     activation=cfg.model.activation,
                     patch_mixer=(
                         PatchMixer(self.patch_count, mode=patch_mixer_mode, dropout=cfg.model.dropout)
-                        if self.use_patch and patch_mixer_mode != "none"
+                        if self.use_patch and patch_mixer_mode != "none" and self.patch_mode != "mean_pool"
                         else None
                     ),
                 )
@@ -237,18 +237,22 @@ class VarMAE(nn.Module):
             usable_len = self.patch_count * self.patch_len
             x_trim = x_enc[:, :usable_len, :]
             patches = x_trim.reshape(bsz, self.patch_count, self.patch_len, n_vars)
-            patch_mean = patches.mean(dim=2)  # [B, P, N]
+            patches = patches.permute(0, 1, 3, 2)  # [B, P, N, patch_len]
 
             if self.mask_axis == "token":
                 mask_tokens = torch.rand(bsz, self.patch_count, n_vars, device=x_enc.device) < self.mask_ratio
-                patch_masked = patch_mean.masked_fill(mask_tokens, 0.0)
                 mask_var = mask_tokens.any(dim=1)
+                patch_emb = self.patch_embed(patches).masked_fill(mask_tokens.unsqueeze(-1), 0.0)
             else:
                 mask_var = torch.rand(bsz, n_vars, device=x_enc.device) < self.mask_ratio
-                patch_masked = patch_mean.masked_fill(mask_var.unsqueeze(1), 0.0)
+                patch_emb = self.patch_embed(patches).masked_fill(mask_var[:, None, :, None], 0.0)
 
-            tokens = patch_masked.reshape(bsz, self.patch_count * n_vars, 1)
-            enc_out = self.value_proj(tokens)
+            if self.patch_mode == "mean_pool":
+                tokens = patch_emb.mean(dim=1)  # [B, N, E]
+            else:
+                tokens = patch_emb.reshape(bsz, self.patch_count * n_vars, -1)
+
+            enc_out = tokens
             enc_out = self._apply_meta(enc_out, meta_emb, n_vars=n_vars)
             attn_mask = build_patch_attn_mask(
                 self.patch_count,
@@ -260,7 +264,8 @@ class VarMAE(nn.Module):
             for layer in self.encoder_layers:
                 enc_out, _ = layer(enc_out, attn_mask=attn_mask)
             enc_out = self.encoder_norm(enc_out)
-            enc_out = enc_out.reshape(bsz, self.patch_count, n_vars, -1).mean(dim=1)
+            if self.patch_mode != "mean_pool":
+                enc_out = enc_out.reshape(bsz, self.patch_count, n_vars, -1).mean(dim=1)
             recon = self.projector(enc_out).permute(0, 2, 1)
 
         if self.use_norm:
