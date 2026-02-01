@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import time
 from datetime import datetime, timezone
 
 import hydra
+import numpy as np
 import torch
 from omegaconf import OmegaConf
 
@@ -30,18 +32,40 @@ def _grad_norm(parameters) -> float:
     return total**0.5
 
 
+def _set_seed(cfg) -> None:
+    if getattr(cfg.runtime, "seed", None) is None:
+        return
+    seed = int(cfg.runtime.seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    if getattr(cfg.runtime, "deterministic", False):
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        if hasattr(torch, "use_deterministic_algorithms"):
+            torch.use_deterministic_algorithms(True, warn_only=True)
+
+
 def _freeze_modules(modules, freeze: bool) -> None:
     for module in modules:
         for param in module.parameters():
             param.requires_grad = not freeze
 
 
-def _remap_ssl_state(model, state: dict) -> dict:
+def _remap_ssl_state(model, state: dict) -> tuple[dict, dict]:
     target_state = model.state_dict()
     target_keys = set(target_state.keys())
     remapped = {}
+    skipped = {
+        "shape_mismatch": [],
+        "missing_keys": [],
+        "skipped_projector": 0,
+    }
     for key, value in state.items():
-        if key.startswith("projector."):
+        if key.startswith("projector"):
+            skipped["skipped_projector"] += 1
             continue
         new_key = key
         if key.startswith("encoder_layers."):
@@ -50,20 +74,78 @@ def _remap_ssl_state(model, state: dict) -> dict:
             new_key = "encoder.norm." + key[len("encoder_norm.") :]
         elif key.startswith("value_proj.") and hasattr(model, "patch_embed"):
             new_key = "patch_embed." + key[len("value_proj.") :]
-        if new_key in target_keys and target_state[new_key].shape == value.shape:
-            remapped[new_key] = value
-    return remapped
+        if new_key in target_keys:
+            if target_state[new_key].shape == value.shape:
+                remapped[new_key] = value
+            else:
+                skipped["shape_mismatch"].append(
+                    (new_key, tuple(value.shape), tuple(target_state[new_key].shape))
+                )
+        else:
+            skipped["missing_keys"].append(new_key)
+    return remapped, skipped
 
 
-def _load_ssl_checkpoint(model, path: str) -> None:
+def _load_ssl_checkpoint(model, path: str) -> dict:
     ckpt = torch.load(path, map_location="cpu")
     state = ckpt.get("state_dict", ckpt)
-    filtered = _remap_ssl_state(model, state)
+    filtered, skipped = _remap_ssl_state(model, state)
     missing, unexpected = model.load_state_dict(filtered, strict=False)
     if missing:
         print(f"[downstream] missing keys: {missing[:5]}{'...' if len(missing)>5 else ''}")
     if unexpected:
         print(f"[downstream] unexpected keys: {unexpected[:5]}{'...' if len(unexpected)>5 else ''}")
+    if skipped["shape_mismatch"]:
+        preview = skipped["shape_mismatch"][:3]
+        print(
+            "[downstream] shape mismatches (first 3): "
+            + ", ".join([f"{k} {s}!= {t}" for k, s, t in preview])
+        )
+        if len(skipped["shape_mismatch"]) > 3:
+            print(f"[downstream] shape mismatches total: {len(skipped['shape_mismatch'])}")
+    patch_embed_mismatch = [
+        (k, s, t)
+        for k, s, t in skipped["shape_mismatch"]
+        if k.startswith("patch_embed.")
+    ]
+    if patch_embed_mismatch:
+        preview = ", ".join([f"{k} {s}!= {t}" for k, s, t in patch_embed_mismatch[:3]])
+        raise ValueError(
+            "[downstream] patch_embed shape mismatch; aborting. "
+            f"mismatches (first 3): {preview}"
+        )
+    def _is_allowed_mismatch(key: str) -> bool:
+        return key.startswith("meta_")
+
+    critical_shape = [
+        (k, s, t)
+        for k, s, t in skipped["shape_mismatch"]
+        if not _is_allowed_mismatch(k)
+    ]
+    critical_missing = [
+        k for k in skipped["missing_keys"] if not _is_allowed_mismatch(k)
+    ]
+    if critical_shape or critical_missing:
+        parts = []
+        if critical_shape:
+            preview = ", ".join([f"{k} {s}!= {t}" for k, s, t in critical_shape[:3]])
+            parts.append(f"shape_mismatch: {preview}")
+        if critical_missing:
+            parts.append(f"unmapped_keys: {critical_missing[:5]}")
+        raise ValueError(
+            "[downstream] SSL checkpoint keys mismatch; aborting. "
+            + " | ".join(parts)
+        )
+    if skipped["missing_keys"]:
+        print(
+            f"[downstream] unmapped keys (first 5): {skipped['missing_keys'][:5]}"
+        )
+    return {
+        "missing": missing,
+        "unexpected": unexpected,
+        "skipped": skipped,
+        "patch_embed_loaded": any(k.startswith("patch_embed.") for k in filtered),
+    }
 
 
 def _maybe_inject_patch_len(cfg, ckpt_path: str) -> None:
@@ -133,6 +215,7 @@ def main(cfg) -> None:
         f.write(OmegaConf.to_yaml(cfg, resolve=True))
 
     device = torch.device("cuda" if cfg.runtime.device == "cuda" and torch.cuda.is_available() else "cpu")
+    _set_seed(cfg)
 
     train_data, train_loader = data_provider(cfg, flag="train")
     val_data, val_loader = data_provider(cfg, flag="val")
@@ -151,10 +234,11 @@ def main(cfg) -> None:
             raise ValueError("Dataset does not expose sensor_ids for metadata matching.")
         meta_emb = load_or_build_embeddings(cfg, sensor_ids).to(device)
 
+    load_info = None
     if cfg.train.mode in ("ft", "lp"):
         if not cfg.train.ssl_ckpt_path:
             raise ValueError("train.ssl_ckpt_path is required for ft/lp")
-        _load_ssl_checkpoint(model, cfg.train.ssl_ckpt_path)
+        load_info = _load_ssl_checkpoint(model, cfg.train.ssl_ckpt_path)
 
     # Freeze rules
     if hasattr(model, "enc_embedding"):
@@ -163,7 +247,11 @@ def main(cfg) -> None:
         # patch model
         patch_embed = getattr(model, "patch_embed", None)
         if patch_embed is not None:
-            freeze_modules = [patch_embed, model.encoder]
+            if load_info is not None and not load_info.get("patch_embed_loaded", True):
+                print("[downstream] patch_embed not loaded; keeping it trainable in LP/FT.")
+                freeze_modules = [model.encoder]
+            else:
+                freeze_modules = [patch_embed, model.encoder]
         else:
             freeze_modules = [model.value_proj, model.encoder]
 
@@ -269,6 +357,12 @@ def main(cfg) -> None:
                 break
 
     wall_time = time.perf_counter() - wall_start
+
+    best_ckpt_path = os.path.join(run_dir, "downstream_checkpoint.pt")
+    if os.path.exists(best_ckpt_path):
+        ckpt = torch.load(best_ckpt_path, map_location=device)
+        state = ckpt.get("state_dict", ckpt)
+        model.load_state_dict(state, strict=False)
 
     test_metrics = _evaluate(model, test_loader, device, cfg.data.pred_len, meta_emb=meta_emb)
     metrics = {

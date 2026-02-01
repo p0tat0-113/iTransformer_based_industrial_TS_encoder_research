@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 
 from itransformer.models.layers.attention import AttentionLayer, FullAttention
-from itransformer.models.layers.embed import DataEmbeddingInverted
 from itransformer.models.layers.transformer import Encoder, EncoderLayer
 
 
@@ -12,7 +11,10 @@ class PatchMAE(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.seq_len = cfg.data.seq_len
-        self.patch_len = max(1, int(cfg.ssl.patch_len))
+        patch_len = int(getattr(cfg.model.patch, "patch_len", 0) or cfg.ssl.patch_len)
+        if patch_len <= 0:
+            raise ValueError("patch_len must be > 0")
+        self.patch_len = patch_len
         self.mask_ratio = cfg.ssl.mask_ratio
         self.patch_mode = getattr(cfg.model.patch, "mode", None) or getattr(cfg.ssl, "patch_mode", "all")
         self.local_win = int(getattr(cfg.model.patch, "local_win", 0) or getattr(cfg.ssl, "local_win", 0))
@@ -24,7 +26,7 @@ class PatchMAE(nn.Module):
         if self.patch_count <= 0:
             raise ValueError("patch_len must be <= seq_len")
 
-        self.value_proj = nn.Linear(1, cfg.model.d_model)
+        self.patch_embed = nn.Linear(self.patch_len, cfg.model.d_model)
 
         if self.meta_enabled:
             meta_dim = cfg.metadata.embedding.dim
@@ -72,7 +74,7 @@ class PatchMAE(nn.Module):
             ],
             norm_layer=nn.LayerNorm(cfg.model.d_model),
         )
-        self.projector = nn.Linear(cfg.model.d_model, 1, bias=True)
+        self.projector = nn.Linear(cfg.model.d_model, self.patch_len, bias=True)
 
     def _apply_meta(self, enc_out, meta_emb):
         if meta_emb is None or not self.meta_enabled or self.meta_mode == "none":
@@ -100,21 +102,36 @@ class PatchMAE(nn.Module):
         usable_len = self.patch_count * self.patch_len
         x_enc = x_enc[:, :usable_len, :]
         patches = x_enc.reshape(bsz, self.patch_count, self.patch_len, n_vars)
-        patch_mean = patches.mean(dim=2)  # [B, P, N]
+        patches = patches.permute(0, 1, 3, 2)  # [B, P, N, patch_len]
 
-        mask = torch.rand(bsz, self.patch_count, device=x_enc.device) < self.mask_ratio
-        patch_masked = patch_mean.masked_fill(mask.unsqueeze(-1), 0.0)
+        time_emb = None
+        time_vars = 0
+        if x_mark is not None:
+            mark_trim = x_mark[:, :usable_len, :]
+            mark_patches = mark_trim.reshape(bsz, self.patch_count, self.patch_len, -1)
+            mark_patches = mark_patches.permute(0, 1, 3, 2)  # [B, P, T, patch_len]
+            time_emb = self.patch_embed(mark_patches)  # [B, P, T, E]
+            time_vars = time_emb.size(2)
 
-        # tokenization: order by patch then variate
-        tokens = patch_masked.permute(0, 1, 2).reshape(bsz, self.patch_count * n_vars, 1)
-        enc_out = self.value_proj(tokens)
-        enc_out = self._apply_meta(enc_out, meta_emb)
+        mask = torch.rand(bsz, self.patch_count, n_vars, device=x_enc.device) < self.mask_ratio
+        patch_emb = self.patch_embed(patches).masked_fill(mask.unsqueeze(-1), 0.0)
+
+        data_tokens = patch_emb.reshape(bsz, self.patch_count * n_vars, -1)
+        data_tokens = self._apply_meta(data_tokens, meta_emb)
+        data_tokens = data_tokens.reshape(bsz, self.patch_count, n_vars, -1)
+
+        total_vars = n_vars + time_vars
+        if time_emb is not None:
+            combined = torch.cat([data_tokens, time_emb], dim=2)  # [B, P, N+T, E]
+        else:
+            combined = data_tokens
+        enc_out = combined.reshape(bsz, self.patch_count * total_vars, -1)
         attn_mask = None
         if self.patch_mode in ("same_time", "local"):
             device = x_enc.device
-            token_count = self.patch_count * n_vars
+            token_count = self.patch_count * total_vars
             idx = torch.arange(token_count, device=device)
-            patch_idx = idx // n_vars
+            patch_idx = idx // total_vars
             if self.patch_mode == "same_time":
                 mask_mat = patch_idx[:, None] != patch_idx[None, :]
             else:
@@ -122,18 +139,25 @@ class PatchMAE(nn.Module):
                 mask_mat = (patch_idx[:, None] - patch_idx[None, :]).abs() > win
             attn_mask = mask_mat.unsqueeze(0).unsqueeze(0)
         enc_out, _ = self.encoder(enc_out, attn_mask=attn_mask)
-        recon_tokens = self.projector(enc_out).reshape(bsz, self.patch_count, n_vars)
+        if time_emb is not None:
+            enc_out = enc_out.reshape(bsz, self.patch_count, total_vars, -1)[:, :, :n_vars, :]
+        else:
+            enc_out = enc_out.reshape(bsz, self.patch_count, n_vars, -1)
+        recon = self.projector(enc_out)  # [B, P, N, patch_len]
 
+        target = patches
         if self.use_norm:
-            recon_tokens = recon_tokens * stdev[:, 0, :].unsqueeze(1).repeat(1, self.patch_count, 1)
-            recon_tokens = recon_tokens + means[:, 0, :].unsqueeze(1).repeat(1, self.patch_count, 1)
+            scale = stdev[:, 0, :].unsqueeze(1).unsqueeze(-1)
+            bias = means[:, 0, :].unsqueeze(1).unsqueeze(-1)
+            recon = recon * scale + bias
+            target = target * scale + bias
 
         mask_f = mask.unsqueeze(-1).float()
-        denom = mask_f.sum() * n_vars
+        denom = mask_f.sum() * self.patch_len
         if denom.item() == 0:
             denom = torch.tensor(1.0, device=x_enc.device)
-        mse = ((recon_tokens - patch_mean) ** 2 * mask_f).sum() / denom
-        mae = (torch.abs(recon_tokens - patch_mean) * mask_f).sum() / denom
+        mse = ((recon - target) ** 2 * mask_f).sum() / denom
+        mae = (torch.abs(recon - target) * mask_f).sum() / denom
         loss = mse
         if return_details:
             return loss, mse, mae

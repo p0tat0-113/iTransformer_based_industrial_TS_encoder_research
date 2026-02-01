@@ -69,7 +69,7 @@ class VarMAE(nn.Module):
         self.meta_enabled = bool(getattr(cfg.model.meta, "enabled", False))
         self.meta_mode = getattr(cfg.model.meta, "mode", "none")
         self.tokenizer = getattr(cfg.ssl, "tokenizer", "auto")
-        self.mask_axis = getattr(cfg.ssl, "mask_axis", "var")
+        self.mask_axis = "var"
 
         patch_enabled = bool(getattr(cfg.model.patch, "enabled", False)) or cfg.model.variant in {
             "P1",
@@ -163,15 +163,37 @@ class VarMAE(nn.Module):
             ]
         )
         self.encoder_norm = nn.LayerNorm(cfg.model.d_model)
-        self.projector = nn.Linear(cfg.model.d_model, cfg.data.seq_len, bias=True)
+        self.projector_seq = nn.Linear(cfg.model.d_model, cfg.data.seq_len, bias=True)
+        self.projector_patch = nn.Linear(cfg.model.d_model, self.patch_len, bias=True) if self.use_patch else None
 
-    def _apply_meta(self, enc_out, meta_emb, n_vars: int | None = None):
+    def _apply_meta(self, enc_out, meta_emb, n_vars: int | None = None, *, mean_pool: bool = False):
         if meta_emb is None or not self.meta_enabled or self.meta_mode == "none":
             return enc_out
         if meta_emb.dim() == 2:
             meta_emb = meta_emb.unsqueeze(0).expand(enc_out.size(0), -1, -1)
 
         if self.use_patch:
+            if mean_pool:
+                if meta_emb.size(1) != n_vars:
+                    if meta_emb.size(1) < n_vars:
+                        pad_len = n_vars - meta_emb.size(1)
+                        pad = torch.zeros(
+                            meta_emb.size(0),
+                            pad_len,
+                            meta_emb.size(2),
+                            device=meta_emb.device,
+                            dtype=meta_emb.dtype,
+                        )
+                        meta_emb = torch.cat([meta_emb, pad], dim=1)
+                    else:
+                        meta_emb = meta_emb[:, :n_vars, :]
+                meta_emb = self.meta_proj(meta_emb)
+                if self.meta_mode == "add":
+                    return enc_out + meta_emb
+                if self.meta_mode in ("concat", "fusion"):
+                    fused = torch.cat([enc_out, meta_emb], dim=-1)
+                    return self.meta_fuse(fused)
+                return enc_out
             if n_vars is None:
                 n_vars = enc_out.size(1)
             if meta_emb.size(1) == n_vars:
@@ -231,32 +253,44 @@ class VarMAE(nn.Module):
             for layer in self.encoder_layers:
                 enc_out, _ = layer(enc_out, attn_mask=None)
             enc_out = self.encoder_norm(enc_out)
-            recon = self.projector(enc_out).permute(0, 2, 1)[:, :, :n_vars]
+            recon = self.projector_seq(enc_out).permute(0, 2, 1)[:, :, :n_vars]
             usable_len = x_enc.size(1)
         else:
             usable_len = self.patch_count * self.patch_len
             x_trim = x_enc[:, :usable_len, :]
             patches = x_trim.reshape(bsz, self.patch_count, self.patch_len, n_vars)
             patches = patches.permute(0, 1, 3, 2)  # [B, P, N, patch_len]
+            time_emb = None
+            if x_mark is not None and self.patch_mode != "mean_pool":
+                mark_trim = x_mark[:, :usable_len, :]
+                mark_patches = mark_trim.reshape(bsz, self.patch_count, self.patch_len, -1)
+                mark_patches = mark_patches.permute(0, 1, 3, 2)  # [B, P, T, patch_len]
+                time_emb = self.patch_embed(mark_patches)  # [B, P, T, E]
+            time_vars = time_emb.size(2) if time_emb is not None else 0
 
-            if self.mask_axis == "token":
-                mask_tokens = torch.rand(bsz, self.patch_count, n_vars, device=x_enc.device) < self.mask_ratio
-                mask_var = mask_tokens.any(dim=1)
-                patch_emb = self.patch_embed(patches).masked_fill(mask_tokens.unsqueeze(-1), 0.0)
-            else:
-                mask_var = torch.rand(bsz, n_vars, device=x_enc.device) < self.mask_ratio
-                patch_emb = self.patch_embed(patches).masked_fill(mask_var[:, None, :, None], 0.0)
+            mask_var = torch.rand(bsz, n_vars, device=x_enc.device) < self.mask_ratio
+            patch_emb = self.patch_embed(patches).masked_fill(mask_var[:, None, :, None], 0.0)
 
             if self.patch_mode == "mean_pool":
                 tokens = patch_emb.mean(dim=1)  # [B, N, E]
             else:
-                tokens = patch_emb.reshape(bsz, self.patch_count * n_vars, -1)
+                total_vars = n_vars + time_vars
+                if time_emb is not None:
+                    combined = torch.cat([patch_emb, time_emb], dim=2)  # [B, P, N+T, E]
+                    tokens = combined.reshape(bsz, self.patch_count * total_vars, -1)
+                else:
+                    tokens = patch_emb.reshape(bsz, self.patch_count * n_vars, -1)
 
             enc_out = tokens
-            enc_out = self._apply_meta(enc_out, meta_emb, n_vars=n_vars)
+            enc_out = self._apply_meta(
+                enc_out,
+                meta_emb,
+                n_vars=n_vars,
+                mean_pool=self.patch_mode == "mean_pool",
+            )
             attn_mask = build_patch_attn_mask(
                 self.patch_count,
-                n_vars,
+                total_vars if time_emb is not None else n_vars,
                 self.patch_mode,
                 self.local_win,
                 x_enc.device,
@@ -265,22 +299,42 @@ class VarMAE(nn.Module):
                 enc_out, _ = layer(enc_out, attn_mask=attn_mask)
             enc_out = self.encoder_norm(enc_out)
             if self.patch_mode != "mean_pool":
-                enc_out = enc_out.reshape(bsz, self.patch_count, n_vars, -1).mean(dim=1)
-            recon = self.projector(enc_out).permute(0, 2, 1)
+                if time_emb is not None:
+                    enc_out = enc_out.reshape(bsz, self.patch_count, total_vars, -1)[:, :, :n_vars, :]
+                else:
+                    enc_out = enc_out.reshape(bsz, self.patch_count, n_vars, -1)
+                recon = self.projector_patch(enc_out)
+            else:
+                recon = self.projector_seq(enc_out).permute(0, 2, 1)[:, :, :n_vars]
 
-        if self.use_norm:
-            recon = recon * stdev[:, 0, :].unsqueeze(1).repeat(1, recon.size(1), 1)
-            recon = recon + means[:, 0, :].unsqueeze(1).repeat(1, recon.size(1), 1)
+        if self.use_patch and self.patch_mode != "mean_pool":
+            target = patches
+            pred = recon
+            if self.use_norm:
+                scale = stdev[:, 0, :].unsqueeze(1).unsqueeze(-1)
+                bias = means[:, 0, :].unsqueeze(1).unsqueeze(-1)
+                target = target * scale + bias
+                pred = pred * scale + bias
 
-        # MSE on masked variates only
-        mask_f = mask_var.unsqueeze(1).float()
-        denom = mask_f.sum() * usable_len
-        if denom.item() == 0:
-            denom = torch.tensor(1.0, device=x_enc.device)
-        target = x_enc[:, :usable_len, :]
-        pred = recon[:, :usable_len, :]
-        mse = ((pred - target) ** 2 * mask_f).sum() / denom
-        mae = (torch.abs(pred - target) * mask_f).sum() / denom
+            mask_f = mask_var[:, None, :, None].float()
+            denom = mask_f.sum() * self.patch_len
+            if denom.item() == 0:
+                denom = torch.tensor(1.0, device=x_enc.device)
+            mse = ((pred - target) ** 2 * mask_f).sum() / denom
+            mae = (torch.abs(pred - target) * mask_f).sum() / denom
+        else:
+            if self.use_norm:
+                recon = recon * stdev[:, 0, :].unsqueeze(1).repeat(1, recon.size(1), 1)
+                recon = recon + means[:, 0, :].unsqueeze(1).repeat(1, recon.size(1), 1)
+            # MSE on masked variates only
+            mask_f = mask_var.unsqueeze(1).float()
+            denom = mask_f.sum() * usable_len
+            if denom.item() == 0:
+                denom = torch.tensor(1.0, device=x_enc.device)
+            target = x_enc[:, :usable_len, :]
+            pred = recon[:, :usable_len, :]
+            mse = ((pred - target) ** 2 * mask_f).sum() / denom
+            mae = (torch.abs(pred - target) * mask_f).sum() / denom
         loss = mse
         if return_details:
             return loss, mse, mae

@@ -41,7 +41,7 @@ R1/R2는 eval op로 실행하고 agg로 집계한다.
 예시 (R1 sweep):
 ```
 python -m itransformer.eval \
-  data=ETTh1 model=P2 metadata.enabled=false \
+  data=ETTh1 model=P2 model.patch.patch_len=8 metadata.enabled=false \
   eval.code=C-RB-1 eval.op_code=R1 "eval.missing_rates=[0.0,0.5]" \
   eval.on_run_id=C-DS-1.ETTh1.P2.sl.sd0
 ```

@@ -71,6 +71,30 @@ def _set_seed(cfg) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def _apply_ckpt_cfg(cfg, ckpt_cfg: dict | None) -> None:
+    if not isinstance(ckpt_cfg, dict):
+        return
+    model_cfg = ckpt_cfg.get("model", {})
+    patch_cfg = model_cfg.get("patch", {}) if isinstance(model_cfg, dict) else {}
+    if not hasattr(cfg, "model") or not hasattr(cfg.model, "patch"):
+        return
+    if getattr(cfg.model.patch, "patch_len", 0) in (0, None) and patch_cfg.get("patch_len"):
+        cfg.model.patch.patch_len = patch_cfg.get("patch_len")
+    if not getattr(cfg.model.patch, "mode", None) and patch_cfg.get("mode"):
+        cfg.model.patch.mode = patch_cfg.get("mode")
+    if getattr(cfg.model.patch, "local_win", None) in (0, None) and patch_cfg.get("local_win") is not None:
+        cfg.model.patch.local_win = patch_cfg.get("local_win")
+
+
+def _require_patch_len(cfg) -> None:
+    variant = getattr(cfg.model, "variant", "")
+    patch_enabled = bool(getattr(cfg.model.patch, "enabled", False))
+    if variant in ("P1", "P2", "P3", "P4") or patch_enabled:
+        patch_len = getattr(cfg.model.patch, "patch_len", 0)
+        if not patch_len:
+            raise ValueError("eval requires model.patch.patch_len for patch models.")
+
+
 def _run_eval(op_code, model, test_loader, device, meta_emb, pred_len, *, level=None, downsample=None, missing_rate=None):
     preds_all = []
     trues_all = []
@@ -120,6 +144,13 @@ def main(cfg) -> None:
         raise ValueError("eval.op_code is required")
 
     ckpt_path = _resolve_ckpt(cfg)
+    try:
+        ckpt_payload = torch.load(ckpt_path, map_location="cpu")
+    except Exception:
+        ckpt_payload = None
+    if isinstance(ckpt_payload, dict):
+        _apply_ckpt_cfg(cfg, ckpt_payload.get("cfg"))
+    _require_patch_len(cfg)
     device = torch.device("cuda" if cfg.runtime.device == "cuda" and torch.cuda.is_available() else "cpu")
     if getattr(cfg.runtime, "deterministic", False):
         _set_seed(cfg)

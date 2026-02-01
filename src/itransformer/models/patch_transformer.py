@@ -62,23 +62,45 @@ class PatchITransformer(nn.Module):
         patches = x_enc.reshape(bsz, self.patch_count, self.patch_len, n_vars)
         patches = patches.permute(0, 1, 3, 2)  # [B, P, N, patch_len]
         patch_emb = self.patch_embed(patches)  # [B, P, N, E]
+        time_emb = None
+        time_vars = 0
+        if x_mark is not None:
+            mark_trim = x_mark[:, :usable_len, :]
+            mark_patches = mark_trim.reshape(bsz, self.patch_count, self.patch_len, -1)
+            mark_patches = mark_patches.permute(0, 1, 3, 2)  # [B, P, T, patch_len]
+            time_emb = self.patch_embed(mark_patches)  # [B, P, T, E]
+            time_vars = time_emb.size(2)
 
         if self.patch_mode == "mean_pool":
             tokens = patch_emb.mean(dim=1)  # [B, N, E]
+            if time_emb is not None:
+                time_tokens = time_emb.mean(dim=1)  # [B, T, E]
+                tokens = torch.cat([tokens, time_tokens], dim=1)
             attn_mask = None
         else:
-            tokens = patch_emb.reshape(bsz, self.patch_count * n_vars, -1)
+            total_vars = n_vars + time_vars
+            if time_emb is not None:
+                combined = torch.cat([patch_emb, time_emb], dim=2)  # [B, P, N+T, E]
+                tokens = combined.reshape(bsz, self.patch_count * total_vars, -1)
+            else:
+                tokens = patch_emb.reshape(bsz, self.patch_count * n_vars, -1)
             attn_mask = build_patch_attn_mask(
                 self.patch_count,
-                n_vars,
+                total_vars,
                 self.patch_mode,
                 self.local_win,
                 x_enc.device,
             )
 
         enc_out, _ = self.encoder(tokens, attn_mask=attn_mask)
+        if self.patch_mode == "mean_pool":
+            enc_out = enc_out[:, :n_vars, :]
         if self.patch_mode != "mean_pool":
-            enc_out = enc_out.reshape(bsz, self.patch_count, n_vars, -1).mean(dim=1)
+            if time_emb is not None:
+                enc_out = enc_out.reshape(bsz, self.patch_count, total_vars, -1)[:, :, :n_vars, :]
+            else:
+                enc_out = enc_out.reshape(bsz, self.patch_count, n_vars, -1)
+            enc_out = enc_out.mean(dim=1)
         pooled = enc_out  # [B, N, E]
         dec_out = self.projector(pooled).permute(0, 2, 1)
 

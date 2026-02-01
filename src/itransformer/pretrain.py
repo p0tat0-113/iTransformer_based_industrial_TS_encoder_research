@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import time
 from datetime import datetime, timezone
 
 import hydra
+import numpy as np
 import torch
 from omegaconf import OmegaConf
 
@@ -27,6 +29,22 @@ def _grad_norm(parameters) -> float:
         param_norm = p.grad.data.norm(2).item()
         total += param_norm * param_norm
     return total**0.5
+
+
+def _set_seed(cfg) -> None:
+    if getattr(cfg.runtime, "seed", None) is None:
+        return
+    seed = int(cfg.runtime.seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    if getattr(cfg.runtime, "deterministic", False):
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        if hasattr(torch, "use_deterministic_algorithms"):
+            torch.use_deterministic_algorithms(True, warn_only=True)
 
 
 def _eval_val_loss(model, loader, device, meta_emb):
@@ -68,6 +86,7 @@ def main(cfg) -> None:
         f.write(OmegaConf.to_yaml(cfg, resolve=True))
 
     device = torch.device("cuda" if cfg.runtime.device == "cuda" and torch.cuda.is_available() else "cpu")
+    _set_seed(cfg)
 
     train_data, train_loader = data_provider(cfg, flag="train")
     _, val_loader = data_provider(cfg, flag="val")

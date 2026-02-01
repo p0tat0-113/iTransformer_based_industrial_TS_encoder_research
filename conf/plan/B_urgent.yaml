@@ -2,7 +2,7 @@ plan_id: B_urgent
 
 # Urgent B plan: Mix(ETTh1+Exchange) pretrain + LP on ETTh1
 # - variants: P0 + P1~P4
-# - patch_len: 16
+# - patch_len: 8
 # - epochs: 10
 # - seed: 0
 
@@ -39,7 +39,7 @@ runs:
       - data.mix.sample_mode=balanced
       - model={variant}
       - model.patch.patch_len={patch_len}
-      - model.patch.local_win=2
+      - model.patch.local_win=1
       - ssl=patch_mae
       - ssl.mask_ratio=0.5
       - ssl.patch_len={patch_len}
@@ -53,7 +53,7 @@ runs:
       - run.id={id}
     sweep:
       variant: [P1, P2, P3, P4]
-      patch_len: [16]
+      patch_len: [8]
       seed: [0]
 
   # -------------------------
@@ -85,7 +85,7 @@ runs:
       - data=ETTh1
       - model={variant}
       - model.patch.patch_len={patch_len}
-      - model.patch.local_win=2
+      - model.patch.local_win=1
       - train=downstream
       - train.mode=lp
       - train.epochs=20
@@ -100,7 +100,7 @@ runs:
       - run.id={id}
     sweep:
       variant: [P1, P2, P3, P4]
-      patch_len: [16]
+      patch_len: [8]
       seed: [0]
 
 ops: []
