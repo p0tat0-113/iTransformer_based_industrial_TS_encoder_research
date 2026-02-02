@@ -68,7 +68,7 @@ P2~P4의 구조 차이가 downstream에서도 반영되도록 설계안을 정�
 1) `enc_out.mean(dim=1)` 제거 (**mean_pool 제외**)  
 2) **Temporal concat head** 추가 (**mean_pool 제외**)  
 3) concat 결과를 `Linear(P*E→pred_len)`에 전달 (**mean_pool 제외**)  
-4) **mean_pool(P1) 경로는 “초기 patch 임베딩 후 patch 평균”만 수행**  
+4) **mean_pool(P1) 경로는 “초기 patch 임베딩 후 MLP 요약(Linear P*E→E)”만 수행**  
    - 이후 encoder 출력은 `[B, N, E]`로 유지하고 **추가 pooling은 하지 않음**  
 5) **x_mark patch token 유지** 후 encoder 출력에서 time token 제거  
 6) **meta 적용 경로 추가** (`_apply_meta`)  
@@ -95,7 +95,7 @@ P2~P4의 구조 차이가 downstream에서도 반영되도록 설계안을 정�
 
 ### 6.1 PatchITransformer 구조 변경 (핵심)
 1) **mean_pool 경로(P1)**  
-   - “초기 patch 임베딩 → patch 평균”만 유지  
+   - “초기 patch 임베딩 → MLP 요약(Linear P*E→E)”만 유지  
    - 이후 encoder 출력은 `[B, N, E]` 그대로 사용  
    - **추가 pooling 없음** (learned pooling 적용 금지)
 
@@ -112,7 +112,7 @@ P2~P4의 구조 차이가 downstream에서도 반영되도록 설계안을 정�
 
 ### 6.3 x_mark 정합화
 - **non-mean_pool**: x_mark도 patch token으로 유지 → encoder 통과 → **time token 제거**
-- **mean_pool**: 초기 patch 평균 후 time token도 평균하여 concat (기존 흐름 유지)
+- **mean_pool**: 초기 patch 요약을 **MLP로 수행**, time token도 동일 MLP로 요약 후 concat
 
 ### 6.4 meta 정합화
 - PatchMAE와 동일한 `_apply_meta` 로직 추가  

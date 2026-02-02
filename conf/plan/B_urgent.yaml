@@ -13,6 +13,7 @@ runs:
       - ssl=var_mae
       - ssl.mask_ratio=0.2
       - ssl.pretrain_epochs=25
+      - ssl.val_mask_ensemble=5
       - optim.lr=0.0005
       - optim.weight_decay=0.01
       - optim.scheduler=cosine
@@ -42,6 +43,7 @@ runs:
       - ssl.mask_ratio=0.2
       - ssl.patch_len={patch_len}
       - ssl.pretrain_epochs=25
+      - ssl.val_mask_ensemble=5
       - optim.lr=0.0005
       - optim.weight_decay=0.01
       - optim.scheduler=cosine
@@ -73,6 +75,7 @@ runs:
       - ssl.mask_ratio=0.2
       - ssl.patch_len={patch_len}
       - ssl.pretrain_epochs=25
+      - ssl.val_mask_ensemble=5
       - optim.lr=0.0005
       - optim.weight_decay=0.01
       - optim.scheduler=cosine
@@ -143,6 +146,63 @@ runs:
       patch_len: [8]
       seed: [0]
 
+  # -------------------------
+  # Downstream FT (ETTh1)
+  # -------------------------
+  - id_template: "B-URG-DSFT.ETTh1.P0.plnone.sd{seed}"
+    entry: downstream
+    overrides:
+      - data=ETTh1
+      - model=P0
+      - train=downstream
+      - train.mode=ft
+      - train.epochs=30
+      - train.freeze_epochs=5
+      - train.patience=0
+      - train.batch_size=32
+      - optim.lr=0.0001
+      - optim.scheduler=cosine
+      - optim.min_lr=0.000001
+      - optim.t_max=30
+      - train.ssl_ckpt_path=./artifacts/runs/B-URG-TR.Mix.P0.plnone.sd{seed}/pretrain_checkpoint.pt
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - run.code=B-URG-DSFT
+      - run.hparams_tag=plnone-ft
+      - run.id={id}
+    sweep:
+      seed: [0]
+
+  - id_template: "B-URG-DSFT.ETTh1.{variant}.pl{patch_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data=ETTh1
+      - model={variant}
+      - model.patch.patch_len={patch_len}
+      - model.patch.local_win=1
+      - train=downstream
+      - train.mode=ft
+      - train.epochs=30
+      - train.freeze_epochs=5
+      - train.patience=0
+      - train.batch_size=32
+      - optim.lr=0.0001
+      - optim.scheduler=cosine
+      - optim.min_lr=0.000001
+      - optim.t_max=30
+      - train.ssl_ckpt_path=./artifacts/runs/B-URG-TR.Mix.{variant}.pl{patch_len}.sd{seed}/pretrain_checkpoint.pt
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - run.code=B-URG-DSFT
+      - run.hparams_tag=pl{patch_len}-ft
+      - run.id={id}
+    sweep:
+      variant: [P1, P2, P3, P4]
+      patch_len: [8]
+      seed: [0]
+
 ops: []
 cmps: []
 
@@ -156,6 +216,15 @@ aggs:
       - data=ETTh1
       - analysis.code=B-EV-2
       - analysis.run_codes=[B-URG-DS]
+      - runtime.device=cuda
+
+  - id: "AGG.ETTh1.B-EV-2-FT__ON=Mix"
+    entry: analysis
+    overrides:
+      - data=ETTh1
+      - analysis.code=B-EV-2-FT
+      - analysis.on=B-URG-DSFT.ETTh1.P0.plnone.sd0,B-URG-DSFT.ETTh1.P1.pl8.sd0,B-URG-DSFT.ETTh1.P2.pl8.sd0,B-URG-DSFT.ETTh1.P3.pl8.sd0,B-URG-DSFT.ETTh1.P4.pl8.sd0
+      - analysis.run_codes=[B-URG-DSFT]
       - runtime.device=cuda
 
   # -------------------------

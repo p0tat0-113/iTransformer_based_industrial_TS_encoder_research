@@ -26,6 +26,7 @@ class PatchITransformer(nn.Module):
             raise ValueError("patch_len must be <= seq_len")
 
         self.patch_embed = nn.Linear(self.patch_len, cfg.model.d_model)
+        self.patch_merge = nn.Linear(self.patch_count * cfg.model.d_model, cfg.model.d_model)
         self.meta_enabled = bool(getattr(cfg.model.meta, "enabled", False))
         self.meta_mode = getattr(cfg.model.meta, "mode", "none")
 
@@ -119,10 +120,16 @@ class PatchITransformer(nn.Module):
             time_vars = time_emb.size(2)
 
         if self.patch_mode == "mean_pool":
-            tokens = patch_emb.mean(dim=1)  # [B, N, E]
+            patch_flat = patch_emb.permute(0, 2, 1, 3).reshape(
+                bsz, n_vars, self.patch_count * patch_emb.size(-1)
+            )
+            tokens = self.patch_merge(patch_flat)  # [B, N, E]
             tokens = self._apply_meta(tokens, meta_emb, repeat_patches=False)
             if time_emb is not None:
-                time_tokens = time_emb.mean(dim=1)  # [B, T, E]
+                time_flat = time_emb.permute(0, 2, 1, 3).reshape(
+                    bsz, time_vars, self.patch_count * time_emb.size(-1)
+                )
+                time_tokens = self.patch_merge(time_flat)  # [B, T, E]
                 tokens = torch.cat([tokens, time_tokens], dim=1)
             attn_mask = None
         else:

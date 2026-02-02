@@ -7,3 +7,4 @@ tokenizer: auto   # auto | variate | patch
 mask_axis: var    # var | token
 patch_mixer: mlp  # mlp | none
 loss: mse
+val_mask_ensemble: 1

@@ -47,7 +47,7 @@ def _set_seed(cfg) -> None:
             torch.use_deterministic_algorithms(True, warn_only=True)
 
 
-def _eval_val_loss(model, loader, device, meta_emb):
+def _eval_val_loss(model, loader, device, meta_emb, mask_ensemble: int):
     model.eval()
     losses = []
     with torch.no_grad():
@@ -57,8 +57,12 @@ def _eval_val_loss(model, loader, device, meta_emb):
             x_mark = None
             if batch_x_mark is not None:
                 x_mark = torch.as_tensor(batch_x_mark, dtype=torch.float32, device=device)
-            loss, _, _ = model(x_enc, x_mark, meta_emb=meta_emb, return_details=True)
-            losses.append(loss.detach().item())
+            rep = max(1, int(mask_ensemble))
+            loss_sum = 0.0
+            for _ in range(rep):
+                loss, _, _ = model(x_enc, x_mark, meta_emb=meta_emb, return_details=True)
+                loss_sum += loss.detach().item()
+            losses.append(loss_sum / rep)
     if not losses:
         return 0.0
     return sum(losses) / len(losses)
@@ -176,7 +180,13 @@ def main(cfg) -> None:
         train_loss = sum(epoch_losses) / max(1, len(epoch_losses))
         train_mse = sum(epoch_mses) / max(1, len(epoch_mses))
         train_mae = sum(epoch_maes) / max(1, len(epoch_maes))
-        val_loss = _eval_val_loss(model, val_loader, device, meta_emb)
+        val_loss = _eval_val_loss(
+            model,
+            val_loader,
+            device,
+            meta_emb,
+            getattr(cfg.ssl, "val_mask_ensemble", 1),
+        )
 
         train_loss_curve.append(train_loss)
         val_loss_curve.append(val_loss)

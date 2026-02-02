@@ -52,6 +52,11 @@ def _build_loader(cfg, data_cfg: dict, flag: str):
         drop_last = True
         batch_size = 1
         freq = data_cfg.get("freq", cfg.data.freq)
+    elif flag == "val":
+        shuffle_flag = False
+        drop_last = False
+        batch_size = cfg.train.batch_size
+        freq = data_cfg.get("freq", cfg.data.freq)
     elif flag == "pred":
         shuffle_flag = False
         drop_last = False
@@ -93,14 +98,17 @@ class MixBatchLoader:
         epoch_size: Optional[int],
         shuffle: bool,
         seed: Optional[int],
+        deterministic: bool = False,
     ):
         self.loaders = loaders
         self.sample_mode = sample_mode
         self.epoch_size = epoch_size
         self.shuffle = shuffle
         self.seed = seed
+        self.deterministic = deterministic
         self._epoch = 0
         self._length = self._compute_length()
+        self._cached_schedule: Optional[List[int]] = None
 
     def _compute_length(self) -> int:
         lengths = [len(loader) for loader in self.loaders]
@@ -144,9 +152,15 @@ class MixBatchLoader:
         return schedule
 
     def __iter__(self):
-        self._epoch += 1
+        if not self.deterministic:
+            self._epoch += 1
         iters = [iter(loader) for loader in self.loaders]
-        schedule = self._build_schedule()
+        if self.deterministic:
+            if self._cached_schedule is None:
+                self._cached_schedule = self._build_schedule()
+            schedule = list(self._cached_schedule)
+        else:
+            schedule = self._build_schedule()
         for idx in schedule:
             try:
                 batch = next(iters[idx])
@@ -198,6 +212,7 @@ def mix_data_provider(cfg, flag: str):
         epoch_size=mix_cfg.get("epoch_size"),
         shuffle=bool(mix_cfg.get("shuffle", True)),
         seed=getattr(cfg.runtime, "seed", None),
+        deterministic=(flag == "val"),
     )
     info = MixDatasetInfo(name=cfg.data.name, dataset_names=dataset_names, length=len(loader))
     return info, loader

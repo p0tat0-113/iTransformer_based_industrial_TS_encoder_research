@@ -37,6 +37,11 @@ def data_provider(cfg, flag: str):
         drop_last = True
         batch_size = 1
         freq = cfg.data.freq
+    elif flag == "val":
+        shuffle_flag = False
+        drop_last = False
+        batch_size = cfg.train.batch_size
+        freq = cfg.data.freq
     elif flag == "pred":
         shuffle_flag = False
         drop_last = False
