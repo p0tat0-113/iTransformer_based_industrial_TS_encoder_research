@@ -134,5 +134,5 @@ dmypy.json
 /dataset
 
 # experiments results
-# /artifacts
+/artifacts
 /artifacts_backup
