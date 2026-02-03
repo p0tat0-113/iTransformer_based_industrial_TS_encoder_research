@@ -1,0 +1,95 @@
+plan_id: ETTh1_supervised
+
+runs:
+  # -------------------------
+  # Supervised (scratch) P0
+  # -------------------------
+  - id_template: "SUP-ETTh1.P0.sd{seed}"
+    entry: downstream
+    overrides:
+      - data=ETTh1
+      - model=P0
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=30
+      - train.batch_size=128
+      - train.patience=0
+      - train.ssl_ckpt_path=null
+      - optim.lr=0.0004
+      - optim.scheduler=cosine
+      - optim.min_lr=0.000001
+      - optim.t_max=30
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - run.code=SUP-ETTh1
+      - run.hparams_tag=scratch
+      - run.id={id}
+    sweep:
+      seed: [0]
+
+  # -------------------------
+  # Supervised (scratch) P2~P4
+  # -------------------------
+  - id_template: "SUP-ETTh1.{variant}.pl{patch_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data=ETTh1
+      - model={variant}
+      - model.patch.patch_len={patch_len}
+      - model.patch.local_win=1
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=30
+      - train.batch_size=128
+      - train.patience=0
+      - train.ssl_ckpt_path=null
+      - optim.lr=0.0004
+      - optim.scheduler=cosine
+      - optim.min_lr=0.000001
+      - optim.t_max=30
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - run.code=SUP-ETTh1
+      - run.hparams_tag=pl{patch_len}-scratch
+      - run.id={id}
+    sweep:
+      variant: [P2, P3, P4]
+      patch_len: [8]
+      seed: [0]
+
+  - id_template: "SUP-ETTh1.{variant}.pl{patch_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data=ETTh1
+      - model={variant}
+      - model.patch.patch_len={patch_len}
+      - model.patch.local_win=1
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=30
+      - train.batch_size=128
+      - train.patience=0
+      - train.ssl_ckpt_path=null
+      - optim.lr=0.0004
+      - optim.scheduler=cosine
+      - optim.min_lr=0.000001
+      - optim.t_max=30
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - run.code=SUP-ETTh1
+      - run.hparams_tag=pl{patch_len}-scratch
+      - run.id={id}
+    sweep:
+      variant: [P2, P3, P4]
+      patch_len: [12,16]
+      seed: [0]
+
+ops: []
+cmps: []
+aggs: []

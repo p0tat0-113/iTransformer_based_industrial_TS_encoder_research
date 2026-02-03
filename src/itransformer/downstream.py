@@ -230,7 +230,12 @@ def main(cfg) -> None:
     val_data, val_loader = data_provider(cfg, flag="val")
     test_data, test_loader = data_provider(cfg, flag="test")
 
-    if cfg.train.mode in ("ft", "lp") and cfg.train.ssl_ckpt_path:
+    train_mode = cfg.train.mode
+    if train_mode in ("ft", "lp") and not cfg.train.ssl_ckpt_path:
+        print("[downstream] ssl_ckpt_path is empty; running from scratch (no load, no freeze).")
+        train_mode = "scratch"
+
+    if train_mode in ("ft", "lp") and cfg.train.ssl_ckpt_path:
         _maybe_inject_patch_len(cfg, cfg.train.ssl_ckpt_path)
 
     model = build_model(cfg)
@@ -244,9 +249,7 @@ def main(cfg) -> None:
         meta_emb = load_or_build_embeddings(cfg, sensor_ids).to(device)
 
     load_info = None
-    if cfg.train.mode in ("ft", "lp"):
-        if not cfg.train.ssl_ckpt_path:
-            raise ValueError("train.ssl_ckpt_path is required for ft/lp")
+    if train_mode in ("ft", "lp"):
         load_info = _load_ssl_checkpoint(model, cfg.train.ssl_ckpt_path)
 
     # Freeze rules
@@ -306,9 +309,9 @@ def main(cfg) -> None:
     wall_start = time.perf_counter()
     for epoch in range(cfg.train.epochs):
         epoch_start = time.perf_counter()
-        if cfg.train.mode == "lp":
+        if train_mode == "lp":
             _freeze_modules(freeze_modules, True)
-        elif cfg.train.mode == "ft" and cfg.train.freeze_epochs > 0:
+        elif train_mode == "ft" and cfg.train.freeze_epochs > 0:
             _freeze_modules(freeze_modules, epoch < cfg.train.freeze_epochs)
         else:
             _freeze_modules(freeze_modules, False)
