@@ -27,6 +27,10 @@ class PatchITransformer(nn.Module):
 
         self.patch_embed = nn.Linear(self.patch_len, cfg.model.d_model)
         self.patch_merge = nn.Linear(self.patch_count * cfg.model.d_model, cfg.model.d_model)
+        self.use_pos_emb = bool(getattr(cfg.model.patch, "use_pos_emb", False))
+        if self.use_pos_emb:
+            self.pos_emb = nn.Parameter(torch.zeros(1, self.patch_count, 1, cfg.model.d_model))
+            nn.init.normal_(self.pos_emb, std=0.02)
         self.meta_enabled = bool(getattr(cfg.model.meta, "enabled", False))
         self.meta_mode = getattr(cfg.model.meta, "mode", "none")
 
@@ -118,6 +122,10 @@ class PatchITransformer(nn.Module):
             mark_patches = mark_patches.permute(0, 1, 3, 2)  # [B, P, T, patch_len]
             time_emb = self.patch_embed(mark_patches)  # [B, P, T, E]
             time_vars = time_emb.size(2)
+        if self.use_pos_emb:
+            patch_emb = patch_emb + self.pos_emb
+            if time_emb is not None:
+                time_emb = time_emb + self.pos_emb
 
         if self.patch_mode == "mean_pool":
             patch_flat = patch_emb.permute(0, 2, 1, 3).reshape(

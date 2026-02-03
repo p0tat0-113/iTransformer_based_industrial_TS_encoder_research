@@ -17,3 +17,4 @@ patch:
   patch_len: 0
   mode: same_time
   local_win: 0
+  use_pos_emb: false

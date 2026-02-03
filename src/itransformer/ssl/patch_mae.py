@@ -27,6 +27,12 @@ class PatchMAE(nn.Module):
             raise ValueError("patch_len must be <= seq_len")
 
         self.patch_embed = nn.Linear(self.patch_len, cfg.model.d_model)
+        self.use_pos_emb = bool(
+            getattr(cfg.model.patch, "use_pos_emb", False) or getattr(cfg.ssl, "use_pos_emb", False)
+        )
+        if self.use_pos_emb:
+            self.pos_emb = nn.Parameter(torch.zeros(1, self.patch_count, 1, cfg.model.d_model))
+            nn.init.normal_(self.pos_emb, std=0.02)
 
         if self.meta_enabled:
             meta_dim = cfg.metadata.embedding.dim
@@ -115,6 +121,10 @@ class PatchMAE(nn.Module):
 
         mask = torch.rand(bsz, self.patch_count, n_vars, device=x_enc.device) < self.mask_ratio
         patch_emb = self.patch_embed(patches).masked_fill(mask.unsqueeze(-1), 0.0)
+        if self.use_pos_emb:
+            patch_emb = patch_emb + self.pos_emb
+            if time_emb is not None:
+                time_emb = time_emb + self.pos_emb
 
         data_tokens = patch_emb.reshape(bsz, self.patch_count * n_vars, -1)
         data_tokens = self._apply_meta(data_tokens, meta_emb)
