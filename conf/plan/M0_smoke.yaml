@@ -1,0 +1,35 @@
+plan_id: M0_smoke
+
+runs:
+  # -------------------------
+  # Supervised (scratch) smoke test: P0 vs M0
+  # -------------------------
+  - id_template: "SMOKE-ETTh1.{variant}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data=ETTh1
+      - model={variant}
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=1
+      - train.batch_size=16
+      - train.num_workers=0
+      - train.patience=0
+      - train.ssl_ckpt_path=null
+      - optim.lr=0.0001
+      - optim.scheduler=none
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - run.code=SMOKE-M0
+      - run.hparams_tag=smoke
+      - run.id={id}
+    sweep:
+      variant: [P0, M0]
+      seed: [0]
+
+ops: []
+cmps: []
+aggs: []

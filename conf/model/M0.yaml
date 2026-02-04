@@ -1,0 +1,39 @@
+variant: M0
+d_model: 512
+n_heads: 8
+e_layers: 2
+d_ff: 2048
+dropout: 0.1
+activation: gelu
+use_norm: true
+
+# Optional features are disabled for the first M0 experiments.
+meta:
+  enabled: false
+  mode: none
+  source: none
+  proj: linear
+  mlp_hidden: 512
+
+patch:
+  enabled: false
+  patch_len: 0
+  mode: none
+  local_win: 0
+  use_pos_emb: false
+
+multislot:
+  # Slot concat order is fixed by list order:
+  # [p=8 slots 2] -> [p=32 slots 1] -> [p=L slots 1]
+  scales: [8, 32, ${data.seq_len}]
+  k_per_scale: [2, 1, 1]
+  pad_value: 0.0
+  temporal_conv:
+    kernel_size: 3
+    layers: 2
+    dilation: 1
+  pma:
+    n_heads: 8
+    ffn: true
+  slot_fuse:
+    hidden: ${model.d_ff}
