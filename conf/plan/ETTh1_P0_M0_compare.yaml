@@ -1,0 +1,38 @@
+plan_id: P0_M0_supervised_val_test
+
+runs:
+  # -------------------------
+  # Supervised (scratch) P0 vs M0 under identical training settings
+  # -------------------------
+  - id_template: "SUP-{dataset}.P0M0_val_test.{variant}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - model={variant}
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=30
+      - train.batch_size=128
+      - train.patience=0
+      - train.ssl_ckpt_path=null
+      - optim.lr=0.0004
+      - optim.scheduler=cosine
+      - optim.min_lr=0.000001
+      - optim.t_max=30
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - train.val_flag=test
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=p0m0-scratch
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1]
+      variant: [P0, M0]
+      seed: [0]
+
+ops: []
+cmps: []
+aggs: []

@@ -4,3 +4,7 @@ patience: 3
 num_workers: 4
 use_amp: false
 gradient_clip: 0.0
+
+# Which split to use for "validation" during training.
+# NOTE: Using "test" here leaks test information into checkpoint selection.
+val_flag: val  # val | test

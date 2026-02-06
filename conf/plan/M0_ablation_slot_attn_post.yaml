@@ -1,0 +1,38 @@
+plan_id: M0_ablation_slot_attn_post
+
+runs:
+  # -------------------------
+  # Ablation #5: Post-encoder slot self-attention (Var-attn -> Slot-attn 1x)
+  # -------------------------
+  - id_template: "SUP-{dataset}.M0SA.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - model=M0
+      - model.multislot.slot_attn.enabled=true
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=30
+      - train.batch_size=128
+      - train.patience=0
+      - train.ssl_ckpt_path=null
+      - optim.lr=0.0004
+      - optim.scheduler=cosine
+      - optim.min_lr=0.000001
+      - optim.t_max=30
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - train.val_flag=test
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=m0-post-slot-attn
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1, Exchange]
+      seed: [0]
+
+ops: []
+cmps: []
+aggs: []

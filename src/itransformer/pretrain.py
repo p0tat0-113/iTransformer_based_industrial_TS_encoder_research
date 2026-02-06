@@ -93,7 +93,12 @@ def main(cfg) -> None:
     _set_seed(cfg)
 
     train_data, train_loader = data_provider(cfg, flag="train")
-    _, val_loader = data_provider(cfg, flag="val")
+    val_flag = str(getattr(cfg.train, "val_flag", "val") or "val").lower()
+    if val_flag not in ("val", "test"):
+        raise ValueError(f"Unsupported train.val_flag: {val_flag} (expected 'val' or 'test')")
+    if val_flag == "test":
+        print("[pretrain] WARNING: Using test split for validation (train.val_flag=test).")
+    _, val_loader = data_provider(cfg, flag=val_flag)
     meta_emb = None
     if cfg.metadata.enabled:
         sensor_ids = getattr(train_data, "sensor_ids", None)
@@ -246,7 +251,7 @@ def main(cfg) -> None:
                     ),
                     "params_count": _param_count(model),
                 },
-                "notes": {"val_metric_basis": "masked_only"},
+                "notes": {"val_metric_basis": "masked_only", "val_split": val_flag},
             },
             f,
             indent=2,

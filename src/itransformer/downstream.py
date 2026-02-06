@@ -227,8 +227,16 @@ def main(cfg) -> None:
     _set_seed(cfg)
 
     train_data, train_loader = data_provider(cfg, flag="train")
-    val_data, val_loader = data_provider(cfg, flag="val")
+    val_flag = str(getattr(cfg.train, "val_flag", "val") or "val").lower()
+    if val_flag not in ("val", "test"):
+        raise ValueError(f"Unsupported train.val_flag: {val_flag} (expected 'val' or 'test')")
+
     test_data, test_loader = data_provider(cfg, flag="test")
+    if val_flag == "test":
+        val_data, val_loader = test_data, test_loader
+        print("[downstream] WARNING: Using test split for validation (train.val_flag=test).")
+    else:
+        val_data, val_loader = data_provider(cfg, flag="val")
 
     train_mode = cfg.train.mode
     if train_mode in ("ft", "lp") and not cfg.train.ssl_ckpt_path:
@@ -267,7 +275,40 @@ def main(cfg) -> None:
         else:
             freeze_modules = [model.value_proj, model.encoder]
 
-    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=cfg.optim.lr)
+    base_lr = float(cfg.optim.lr)
+    cln_lr_mult = float(getattr(cfg.optim, "cln_lr_mult", 1.0) or 1.0)
+    if cln_lr_mult <= 0:
+        raise ValueError(f"optim.cln_lr_mult must be > 0 (got {cln_lr_mult})")
+
+    # Optional: separate param group for slot-conditioned LayerNorm (CLN) gamma/beta embeddings.
+    # This lets us keep the main model stable while allowing CLN to adapt faster.
+    if cln_lr_mult != 1.0:
+        cln_params = []
+        base_params = []
+        for name, p in model.named_parameters():
+            if not p.requires_grad:
+                continue
+            if name.endswith(".gamma.weight") or name.endswith(".beta.weight"):
+                cln_params.append(p)
+            else:
+                base_params.append(p)
+        if cln_params:
+            optimizer = torch.optim.Adam(
+                [
+                    {"params": base_params, "lr": base_lr},
+                    {"params": cln_params, "lr": base_lr * cln_lr_mult},
+                ]
+            )
+            print(
+                "[downstream] Using CLN param group: "
+                f"base_lr={base_lr:g}, cln_lr={base_lr * cln_lr_mult:g} (mult={cln_lr_mult:g}), "
+                f"n_cln_params={len(cln_params)}"
+            )
+        else:
+            print("[downstream] optim.cln_lr_mult is set but no CLN params found; ignoring.")
+            optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=base_lr)
+    else:
+        optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=base_lr)
     scheduler = None
     scheduler_name = str(getattr(cfg.optim, "scheduler", "none") or "none").lower()
     if scheduler_name != "none":
@@ -285,6 +326,15 @@ def main(cfg) -> None:
             raise ValueError(f"Unsupported optim.scheduler: {scheduler_name}")
     criterion = torch.nn.MSELoss()
 
+    ms_cfg = getattr(cfg.model, "multislot", None)
+    div_cfg = getattr(ms_cfg, "diversity", None) if ms_cfg is not None else None
+    div_enabled = bool(getattr(div_cfg, "enabled", False))
+    div_lambda = float(getattr(div_cfg, "lambda", 0.0) or 0.0)
+    if div_lambda < 0:
+        raise ValueError(f"model.multislot.diversity.lambda must be >= 0 (got {div_lambda})")
+    if div_enabled and div_lambda > 0:
+        print(f"[downstream] diversity loss enabled: lambda={div_lambda:g}")
+
     patience = int(getattr(cfg.train, "patience", 0) or 0)
     best_val = float("inf")
     best_epoch = 0
@@ -298,6 +348,7 @@ def main(cfg) -> None:
     val_loss_curve = []
     grad_norm_curve = []
     lr_curve = []
+    train_div_loss_curve = []
 
     epoch_times = []
     total_step_time = 0.0
@@ -321,6 +372,7 @@ def main(cfg) -> None:
         epoch_mses = []
         epoch_maes = []
         epoch_grad_norms = []
+        epoch_div_losses = []
         for batch in train_loader:
             step_start = time.perf_counter()
             batch_x, batch_y, batch_x_mark, _ = batch
@@ -336,11 +388,22 @@ def main(cfg) -> None:
                 out = model(x_enc, x_mark)
             else:
                 out = model(x_enc, x_mark, meta_emb)
-            loss = criterion(out, true)
+            mse_loss = criterion(out, true)
+            loss = mse_loss
+
+            div_loss = None
+            if div_enabled and div_lambda > 0:
+                get_div = getattr(model, "get_diversity_loss", None)
+                if callable(get_div):
+                    div_loss = get_div()
+                if div_loss is not None:
+                    loss = loss + div_lambda * div_loss
+                    epoch_div_losses.append(float(div_loss.detach().item()))
+
             loss.backward()
             grad_norm = _grad_norm(model.parameters())
             optimizer.step()
-            epoch_losses.append(loss.detach().item())
+            epoch_losses.append(mse_loss.detach().item())
             epoch_mses.append(torch.mean((out - true) ** 2).detach().item())
             epoch_maes.append(torch.mean(torch.abs(out - true)).detach().item())
             epoch_grad_norms.append(grad_norm)
@@ -351,11 +414,13 @@ def main(cfg) -> None:
         train_loss = sum(epoch_losses) / max(1, len(epoch_losses))
         train_mse = sum(epoch_mses) / max(1, len(epoch_mses))
         train_mae = sum(epoch_maes) / max(1, len(epoch_maes))
+        train_div = sum(epoch_div_losses) / max(1, len(epoch_div_losses)) if epoch_div_losses else 0.0
         val_metrics = _evaluate(model, val_loader, device, cfg.data.pred_len, meta_emb=meta_emb)
         val_loss = val_metrics["mse"]
 
         train_loss_curve.append(train_loss)
         val_loss_curve.append(val_loss)
+        train_div_loss_curve.append(train_div)
         grad_norm_curve.append(sum(epoch_grad_norms) / max(1, len(epoch_grad_norms)))
         lr_curve.append(float(optimizer.param_groups[0]["lr"]))
         if scheduler is not None:
@@ -365,7 +430,7 @@ def main(cfg) -> None:
         epoch_times.append(epoch_time)
 
         print(
-            f"[downstream] epoch={epoch+1} train_loss={train_loss:.6f} val_loss={val_loss:.6f}"
+            f"[downstream] epoch={epoch+1} train_loss={train_loss:.6f} val_loss={val_loss:.6f} div_loss={train_div:.6f}"
         )
 
         if val_loss < best_val:
@@ -406,6 +471,7 @@ def main(cfg) -> None:
         "curves": {
             "train_loss": train_loss_curve,
             "val_loss": val_loss_curve,
+            "train_div_loss": train_div_loss_curve,
             "grad_norm": grad_norm_curve,
             "lr": lr_curve,
         },
@@ -418,6 +484,7 @@ def main(cfg) -> None:
             ),
             "params_count": _param_count(model),
         },
+        "notes": {"val_split": val_flag},
         "eval": {"test": test_metrics},
     }
 

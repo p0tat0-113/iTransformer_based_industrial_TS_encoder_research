@@ -23,9 +23,15 @@ patch:
   use_pos_emb: false
 
 multislot:
+  # Internal embedding dimension for slotizer/temporal conv path.
+  # If different from model.d_model, M0 will project slots to model.d_model before encoder.
+  d_model: ${model.d_model}
   # Slot concat order is fixed by list order:
   # [p=8 slots 2] -> [p=32 slots 1] -> [p=L slots 1]
-  scales: [8, 32, ${data.seq_len}]
+  scales:
+    - 8
+    - 32
+    - ${data.seq_len}
   k_per_scale: [2, 1, 1]
   pad_value: 0.0
   temporal_conv:
@@ -35,5 +41,27 @@ multislot:
   pma:
     n_heads: 8
     ffn: true
+    kv_include_seeds: false
+  slotizer:
+    mode: pma   # pma | mean
+  diversity:
+    enabled: false
+    lambda: 0.0
+    apply_to: x_only   # all | x_only
+    min_patches: 2
+    patch_renorm: true
+    eps: 1e-8
+  covariates:
+    mode: slotize   # slotize | mlp_global
+    mlp_hidden: ${model.d_model}
+  cond_ln:
+    enabled: false
+    id: slot   # slot | scale
+    apply_to: all   # all | x_only
+  slot_attn:
+    enabled: false
+    mode: post   # post | interleave | between
+    n_heads: ${model.n_heads}
   slot_fuse:
+    mode: mlp   # mlp | residual_gated | select_global
     hidden: ${model.d_ff}
