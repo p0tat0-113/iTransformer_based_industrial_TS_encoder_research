@@ -1,13 +1,11 @@
-plan_id: M0_quick_combo_rgpv_sa_k321_e5_vt
+plan_id: M0_quick_combo_rgpv_sa_outfuse_k321_e5_vt
 
 runs:
-  # Quick combo sanity run (intentionally uses val_flag=test):
-  # - Residual-gated fuse
-  # - k_per_scale: [3,2,1] (was [2,1,1])
-  # - PMA K/V include seeds (Perceiver Resampler style)
-  # - Post-encoder slot self-attention
-  # - epochs=5
-  - id_template: "SUP-{dataset}.M0RGPKVSA.k321.e5.vt.sd{seed}"
+  # Quick combo with output-space residual-gated fusion:
+  # - Per-slot projection heads
+  # - y = y_L + g * sum_i alpha_i * (y_i - y_L)
+  # - k_per_scale: [3,2,1], PMA K/V include seeds, post slot self-attention
+  - id_template: "SUP-{dataset}.M0RGOUT.k321.e5.vt.sd{seed}"
     entry: downstream
     overrides:
       - data={dataset}
@@ -17,7 +15,7 @@ runs:
       - model.multislot.pma.kv_include_seeds=true
       - model.multislot.slot_attn.enabled=true
       - model.multislot.slot_attn.mode=post
-      - model.multislot.slot_fuse.mode=residual_gated
+      - model.multislot.slot_fuse.mode=residual_gated_output
       - model.d_model=512
       - model.multislot.d_model=256
       - train=downstream
@@ -37,7 +35,7 @@ runs:
       - runtime.seed={seed}
       - runtime.deterministic=true
       - run.code=SUP-{dataset}
-      - run.hparams_tag=m0-rg+pkv+post-sa-k321-e5-valtest
+      - run.hparams_tag=m0-rgout+pkv+post-sa-k321-e5-valtest
       - run.id={id}
     sweep:
       dataset: [ETTh1, Exchange, Weather]
@@ -46,3 +44,4 @@ runs:
 ops: []
 cmps: []
 aggs: []
+

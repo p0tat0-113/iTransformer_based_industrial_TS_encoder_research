@@ -1,13 +1,14 @@
-plan_id: M0_quick_combo_rgpv_sa_k321_e5_vt
+plan_id: M0_quick_combo_rgpv_sa_k321_e5_vt_dwconv_same
 
 runs:
-  # Quick combo sanity run (intentionally uses val_flag=test):
+  # Quick combo run with depthwise-separable temporal conv and SAME padding:
   # - Residual-gated fuse
-  # - k_per_scale: [3,2,1] (was [2,1,1])
+  # - k_per_scale: [3,2,1]
   # - PMA K/V include seeds (Perceiver Resampler style)
   # - Post-encoder slot self-attention
-  # - epochs=5
-  - id_template: "SUP-{dataset}.M0RGPKVSA.k321.e5.vt.sd{seed}"
+  # - temporal_conv.type = dwsep
+  # - temporal_conv.padding_mode = same
+  - id_template: "SUP-{dataset}.M0RGPKVSA.k321.e5.vt.dwconv.same.sd{seed}"
     entry: downstream
     overrides:
       - data={dataset}
@@ -18,6 +19,8 @@ runs:
       - model.multislot.slot_attn.enabled=true
       - model.multislot.slot_attn.mode=post
       - model.multislot.slot_fuse.mode=residual_gated
+      - model.multislot.temporal_conv.type=dwsep
+      - model.multislot.temporal_conv.padding_mode=same
       - model.d_model=512
       - model.multislot.d_model=256
       - train=downstream
@@ -37,10 +40,10 @@ runs:
       - runtime.seed={seed}
       - runtime.deterministic=true
       - run.code=SUP-{dataset}
-      - run.hparams_tag=m0-rg+pkv+post-sa-k321-e5-valtest
+      - run.hparams_tag=m0-rg+pkv+post-sa-k321-e5-valtest-dwconv-same
       - run.id={id}
     sweep:
-      dataset: [ETTh1, Exchange, Weather]
+      dataset: [ETTh1, Exchange]
       seed: [0]
 
 ops: []

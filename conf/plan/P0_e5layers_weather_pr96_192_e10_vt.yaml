@@ -1,0 +1,40 @@
+plan_id: P0_e5layers_weather_pr96_192_e10_vt
+
+runs:
+  # P0 capacity-matching probe:
+  # - Increase encoder depth to 5 layers
+  # - Weather only
+  # - pred_len sweep: 96, 192
+  - id_template: "SUP-Weather.P0.e5l.e10.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data=Weather
+      - data.pred_len={pred_len}
+      - model=P0
+      - model.e_layers=5
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+      - optim.lr=0.0001
+      - optim.scheduler=cosine
+      - optim.min_lr=0.000001
+      - optim.t_max=5
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - run.code=SUP-Weather
+      - run.hparams_tag=p0-e5l-e10-valtest-pr{pred_len}
+      - run.id={id}
+    sweep:
+      pred_len: [96, 192]
+      seed: [0]
+
+ops: []
+cmps: []
+aggs: []

@@ -35,15 +35,22 @@ multislot:
   k_per_scale: [2, 1, 1]
   pad_value: 0.0
   temporal_conv:
+    type: standard   # standard | dwsep
     kernel_size: 3
     layers: 2
     dilation: 1
+    padding_mode: causal   # causal | same
   pma:
     n_heads: 8
     ffn: true
     kv_include_seeds: false
   slotizer:
     mode: pma   # pma | mean
+    share_across_scales: false
+    post_slot_attn:
+      enabled: false
+      n_heads: ${model.n_heads}
+      share_across_scales: true  # if true, one shared layer; k=1 scales are skipped automatically
   diversity:
     enabled: false
     lambda: 0.0
@@ -63,5 +70,19 @@ multislot:
     mode: post   # post | interleave | between
     n_heads: ${model.n_heads}
   slot_fuse:
-    mode: mlp   # mlp | residual_gated | select_global
+    mode: mlp   # mlp | residual_gated | residual_gated_output | scale_flatten_mean | select_global
     hidden: ${model.d_ff}
+    extra_slot_dropout: 0.0   # train-time dropout on extra slots only (baseline slot is never dropped)
+    horizon_gate:
+      enabled: false
+      mode: linear   # linear | bias
+      init_schedule: linear   # linear | sigmix_v1
+      init_start: -2.0
+      init_end: -4.0
+    horizon_alpha:
+      enabled: false
+      hidden: 16
+    global_ma:
+      enabled: false
+      kernel_size: 25
+      combine: gated_add   # add | gated_add

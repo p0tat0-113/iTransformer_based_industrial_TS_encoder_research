@@ -1,23 +1,27 @@
-plan_id: M0_quick_combo_rgpv_sa_k321_e5_vt
+plan_id: M0_quick_combo_rgpv_sa_outfuse_halpha_hgatebias_k321_e5_vt_pr720
 
 runs:
-  # Quick combo sanity run (intentionally uses val_flag=test):
-  # - Residual-gated fuse
-  # - k_per_scale: [3,2,1] (was [2,1,1])
-  # - PMA K/V include seeds (Perceiver Resampler style)
-  # - Post-encoder slot self-attention
-  # - epochs=5
-  - id_template: "SUP-{dataset}.M0RGPKVSA.k321.e5.vt.sd{seed}"
+  # Output-space residual-gated fusion with both:
+  # - horizon-wise alpha (output-based scores)
+  # - horizon-wise bias gate (init_end=-8 for conservative long horizon)
+  - id_template: "SUP-{dataset}.M0RGOUTHAHG.k321.e5.vt.pr{pred_len}.sd{seed}"
     entry: downstream
     overrides:
       - data={dataset}
+      - data.pred_len={pred_len}
       - model=M0
       - model.multislot.k_per_scale=[3,2,1]
       - model.multislot.slotizer.mode=pma
       - model.multislot.pma.kv_include_seeds=true
       - model.multislot.slot_attn.enabled=true
       - model.multislot.slot_attn.mode=post
-      - model.multislot.slot_fuse.mode=residual_gated
+      - model.multislot.slot_fuse.mode=residual_gated_output
+      - model.multislot.slot_fuse.horizon_alpha.enabled=true
+      - model.multislot.slot_fuse.horizon_alpha.hidden=16
+      - model.multislot.slot_fuse.horizon_gate.enabled=true
+      - model.multislot.slot_fuse.horizon_gate.mode=bias
+      - model.multislot.slot_fuse.horizon_gate.init_start=-2.0
+      - model.multislot.slot_fuse.horizon_gate.init_end=-8.0
       - model.d_model=512
       - model.multislot.d_model=256
       - train=downstream
@@ -37,10 +41,11 @@ runs:
       - runtime.seed={seed}
       - runtime.deterministic=true
       - run.code=SUP-{dataset}
-      - run.hparams_tag=m0-rg+pkv+post-sa-k321-e5-valtest
+      - run.hparams_tag=m0-rgout+halpha_out+hgatebias_ie-8+pkv+post-sa-k321-e5-valtest-pr{pred_len}
       - run.id={id}
     sweep:
-      dataset: [ETTh1, Exchange, Weather]
+      dataset: [ETTh1]
+      pred_len: [720]
       seed: [0]
 
 ops: []

@@ -1,19 +1,18 @@
-plan_id: M0_quick_combo_rgpv_sa_k321_e5_vt
+plan_id: M0_quick_combo_rgpv_sa_k321_e5_vt_slotizer_postsa
 
 runs:
-  # Quick combo sanity run (intentionally uses val_flag=test):
-  # - Residual-gated fuse
-  # - k_per_scale: [3,2,1] (was [2,1,1])
-  # - PMA K/V include seeds (Perceiver Resampler style)
-  # - Post-encoder slot self-attention
-  # - epochs=5
-  - id_template: "SUP-{dataset}.M0RGPKVSA.k321.e5.vt.sd{seed}"
+  # Base: M0_quick_combo_rgpv_sa_k321_e5_vt
+  # Added:
+  # - PMA-after same-scale slot self-attention (shared layer; k=1 scales skipped)
+  - id_template: "SUP-{dataset}.M0RGPKVSA.k321.e5.vt.spsa.sd{seed}"
     entry: downstream
     overrides:
       - data={dataset}
       - model=M0
       - model.multislot.k_per_scale=[3,2,1]
       - model.multislot.slotizer.mode=pma
+      - model.multislot.slotizer.post_slot_attn.enabled=true
+      - model.multislot.slotizer.post_slot_attn.share_across_scales=true
       - model.multislot.pma.kv_include_seeds=true
       - model.multislot.slot_attn.enabled=true
       - model.multislot.slot_attn.mode=post
@@ -37,10 +36,10 @@ runs:
       - runtime.seed={seed}
       - runtime.deterministic=true
       - run.code=SUP-{dataset}
-      - run.hparams_tag=m0-rg+pkv+post-sa-k321-e5-valtest
+      - run.hparams_tag=m0-rg+pkv+post-sa+spsa-k321-e5-valtest
       - run.id={id}
     sweep:
-      dataset: [ETTh1, Exchange, Weather]
+      dataset: [ETTh1, Exchange]
       seed: [0]
 
 ops: []

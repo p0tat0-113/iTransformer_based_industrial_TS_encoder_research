@@ -1,13 +1,8 @@
-plan_id: M0_quick_combo_rgpv_sa_k321_e5_vt
+plan_id: M0_quick_combo_rgpv_sa_k321_e5_vt_global_ma
 
 runs:
-  # Quick combo sanity run (intentionally uses val_flag=test):
-  # - Residual-gated fuse
-  # - k_per_scale: [3,2,1] (was [2,1,1])
-  # - PMA K/V include seeds (Perceiver Resampler style)
-  # - Post-encoder slot self-attention
-  # - epochs=5
-  - id_template: "SUP-{dataset}.M0RGPKVSA.k321.e5.vt.sd{seed}"
+  # k321 baseline + global MA decomposition on p=L path (output-stage fusion)
+  - id_template: "SUP-{dataset}.M0RGPKVSA.gma.k321.e5.vt.sd{seed}"
     entry: downstream
     overrides:
       - data={dataset}
@@ -17,7 +12,10 @@ runs:
       - model.multislot.pma.kv_include_seeds=true
       - model.multislot.slot_attn.enabled=true
       - model.multislot.slot_attn.mode=post
-      - model.multislot.slot_fuse.mode=residual_gated
+      - model.multislot.slot_fuse.mode=residual_gated_output
+      - model.multislot.slot_fuse.global_ma.enabled=true
+      - model.multislot.slot_fuse.global_ma.kernel_size=25
+      - model.multislot.slot_fuse.global_ma.combine=gated_add
       - model.d_model=512
       - model.multislot.d_model=256
       - train=downstream
@@ -37,10 +35,10 @@ runs:
       - runtime.seed={seed}
       - runtime.deterministic=true
       - run.code=SUP-{dataset}
-      - run.hparams_tag=m0-rg+pkv+post-sa-k321-e5-valtest
+      - run.hparams_tag=m0-rg+pkv+post-sa+global-ma-k321-e5-valtest
       - run.id={id}
     sweep:
-      dataset: [ETTh1, Exchange, Weather]
+      dataset: [ETTh1, Exchange]
       seed: [0]
 
 ops: []

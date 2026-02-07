@@ -1,6 +1,8 @@
-name: adam
-lr: 0.0001
+name: sgd
+lr: 0.01
 weight_decay: 0.0
+momentum: 0.9
+nesterov: false
 # Optional LR multiplier for slot-conditioned LayerNorm (CLN) parameters.
 # When enabled, downstream training will create a separate param group for CLN (gamma/beta)
 # with lr = lr * cln_lr_mult.

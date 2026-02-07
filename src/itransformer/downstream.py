@@ -276,10 +276,30 @@ def main(cfg) -> None:
             freeze_modules = [model.value_proj, model.encoder]
 
     base_lr = float(cfg.optim.lr)
+    optim_name = str(getattr(cfg.optim, "name", "adam") or "adam").lower()
+    weight_decay = float(getattr(cfg.optim, "weight_decay", 0.0) or 0.0)
     cln_lr_mult = float(getattr(cfg.optim, "cln_lr_mult", 1.0) or 1.0)
     if cln_lr_mult <= 0:
         raise ValueError(f"optim.cln_lr_mult must be > 0 (got {cln_lr_mult})")
 
+    def _build_optimizer(params):
+        if optim_name == "adam":
+            return torch.optim.Adam(params, lr=base_lr, weight_decay=weight_decay)
+        if optim_name == "adamw":
+            return torch.optim.AdamW(params, lr=base_lr, weight_decay=weight_decay)
+        if optim_name == "sgd":
+            momentum = float(getattr(cfg.optim, "momentum", 0.0) or 0.0)
+            nesterov = bool(getattr(cfg.optim, "nesterov", False))
+            return torch.optim.SGD(
+                params,
+                lr=base_lr,
+                momentum=momentum,
+                weight_decay=weight_decay,
+                nesterov=nesterov,
+            )
+        raise ValueError(f"Unsupported optim.name: {optim_name} (expected: adam, adamw, sgd)")
+
+    has_cln_param_group = False
     # Optional: separate param group for slot-conditioned LayerNorm (CLN) gamma/beta embeddings.
     # This lets us keep the main model stable while allowing CLN to adapt faster.
     if cln_lr_mult != 1.0:
@@ -293,12 +313,13 @@ def main(cfg) -> None:
             else:
                 base_params.append(p)
         if cln_params:
-            optimizer = torch.optim.Adam(
+            optimizer = _build_optimizer(
                 [
                     {"params": base_params, "lr": base_lr},
                     {"params": cln_params, "lr": base_lr * cln_lr_mult},
                 ]
             )
+            has_cln_param_group = True
             print(
                 "[downstream] Using CLN param group: "
                 f"base_lr={base_lr:g}, cln_lr={base_lr * cln_lr_mult:g} (mult={cln_lr_mult:g}), "
@@ -306,9 +327,9 @@ def main(cfg) -> None:
             )
         else:
             print("[downstream] optim.cln_lr_mult is set but no CLN params found; ignoring.")
-            optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=base_lr)
+            optimizer = _build_optimizer(filter(lambda p: p.requires_grad, model.parameters()))
     else:
-        optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=base_lr)
+        optimizer = _build_optimizer(filter(lambda p: p.requires_grad, model.parameters()))
     scheduler = None
     scheduler_name = str(getattr(cfg.optim, "scheduler", "none") or "none").lower()
     if scheduler_name != "none":
@@ -322,6 +343,101 @@ def main(cfg) -> None:
                 T_max=t_max,
                 eta_min=min_lr,
             )
+        elif scheduler_name == "plateau":
+            plateau_mode = str(getattr(cfg.optim, "plateau_mode", "min") or "min").lower()
+            plateau_factor = float(getattr(cfg.optim, "plateau_factor", 0.5) or 0.5)
+            plateau_patience = int(getattr(cfg.optim, "plateau_patience", 2) or 2)
+            plateau_threshold = float(getattr(cfg.optim, "plateau_threshold", 1e-4) or 1e-4)
+            plateau_threshold_mode = str(getattr(cfg.optim, "plateau_threshold_mode", "rel") or "rel").lower()
+            plateau_cooldown = int(getattr(cfg.optim, "plateau_cooldown", 0) or 0)
+            plateau_eps = float(getattr(cfg.optim, "plateau_eps", 1e-8) or 1e-8)
+            plateau_min_lr = getattr(cfg.optim, "plateau_min_lr", None)
+            if plateau_min_lr is None:
+                plateau_min_lr = float(getattr(cfg.optim, "min_lr", 0.0) or 0.0)
+            else:
+                plateau_min_lr = float(plateau_min_lr)
+
+            if plateau_mode not in ("min", "max"):
+                raise ValueError(f"optim.plateau_mode must be one of: min, max (got {plateau_mode})")
+            if not (0.0 < plateau_factor < 1.0):
+                raise ValueError(f"optim.plateau_factor must be in (0, 1) (got {plateau_factor})")
+            if plateau_patience < 0:
+                raise ValueError(f"optim.plateau_patience must be >= 0 (got {plateau_patience})")
+            if plateau_threshold_mode not in ("rel", "abs"):
+                raise ValueError(
+                    "optim.plateau_threshold_mode must be one of: rel, abs "
+                    f"(got {plateau_threshold_mode})"
+                )
+            if plateau_cooldown < 0:
+                raise ValueError(f"optim.plateau_cooldown must be >= 0 (got {plateau_cooldown})")
+            if plateau_min_lr < 0:
+                raise ValueError(f"optim.plateau_min_lr must be >= 0 (got {plateau_min_lr})")
+            if plateau_eps < 0:
+                raise ValueError(f"optim.plateau_eps must be >= 0 (got {plateau_eps})")
+
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode=plateau_mode,
+                factor=plateau_factor,
+                patience=plateau_patience,
+                threshold=plateau_threshold,
+                threshold_mode=plateau_threshold_mode,
+                cooldown=plateau_cooldown,
+                min_lr=plateau_min_lr,
+                eps=plateau_eps,
+            )
+        elif scheduler_name == "onecycle":
+            max_lr_cfg = getattr(cfg.optim, "onecycle_max_lr", None)
+            max_lr_base = base_lr if max_lr_cfg is None else float(max_lr_cfg)
+            pct_start = float(getattr(cfg.optim, "onecycle_pct_start", 0.3) or 0.3)
+            anneal_strategy = str(getattr(cfg.optim, "onecycle_anneal_strategy", "cos") or "cos").lower()
+            div_factor = float(getattr(cfg.optim, "onecycle_div_factor", 25.0) or 25.0)
+            final_div_factor = float(getattr(cfg.optim, "onecycle_final_div_factor", 1e4) or 1e4)
+            three_phase = bool(getattr(cfg.optim, "onecycle_three_phase", False))
+            total_steps = int(getattr(cfg.optim, "onecycle_total_steps", 0) or 0)
+
+            if max_lr_base <= 0:
+                raise ValueError(f"optim.onecycle_max_lr must be > 0 (got {max_lr_base})")
+            if not (0.0 < pct_start < 1.0):
+                raise ValueError(f"optim.onecycle_pct_start must be in (0, 1) (got {pct_start})")
+            if anneal_strategy not in ("cos", "linear"):
+                raise ValueError(
+                    "optim.onecycle_anneal_strategy must be one of: cos, linear "
+                    f"(got {anneal_strategy})"
+                )
+            if div_factor <= 0:
+                raise ValueError(f"optim.onecycle_div_factor must be > 0 (got {div_factor})")
+            if final_div_factor <= 0:
+                raise ValueError(f"optim.onecycle_final_div_factor must be > 0 (got {final_div_factor})")
+
+            if has_cln_param_group:
+                max_lr = [max_lr_base, max_lr_base * cln_lr_mult]
+            else:
+                max_lr = max_lr_base
+
+            if total_steps > 0:
+                scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                    optimizer,
+                    max_lr=max_lr,
+                    total_steps=total_steps,
+                    pct_start=pct_start,
+                    anneal_strategy=anneal_strategy,
+                    div_factor=div_factor,
+                    final_div_factor=final_div_factor,
+                    three_phase=three_phase,
+                )
+            else:
+                scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                    optimizer,
+                    max_lr=max_lr,
+                    epochs=int(cfg.train.epochs),
+                    steps_per_epoch=len(train_loader),
+                    pct_start=pct_start,
+                    anneal_strategy=anneal_strategy,
+                    div_factor=div_factor,
+                    final_div_factor=final_div_factor,
+                    three_phase=three_phase,
+                )
         else:
             raise ValueError(f"Unsupported optim.scheduler: {scheduler_name}")
     criterion = torch.nn.MSELoss()
@@ -357,6 +473,7 @@ def main(cfg) -> None:
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
 
+    step_scheduler_per_batch = scheduler is not None and scheduler_name == "onecycle"
     wall_start = time.perf_counter()
     for epoch in range(cfg.train.epochs):
         epoch_start = time.perf_counter()
@@ -403,6 +520,8 @@ def main(cfg) -> None:
             loss.backward()
             grad_norm = _grad_norm(model.parameters())
             optimizer.step()
+            if step_scheduler_per_batch:
+                scheduler.step()
             epoch_losses.append(mse_loss.detach().item())
             epoch_mses.append(torch.mean((out - true) ** 2).detach().item())
             epoch_maes.append(torch.mean(torch.abs(out - true)).detach().item())
@@ -424,7 +543,10 @@ def main(cfg) -> None:
         grad_norm_curve.append(sum(epoch_grad_norms) / max(1, len(epoch_grad_norms)))
         lr_curve.append(float(optimizer.param_groups[0]["lr"]))
         if scheduler is not None:
-            scheduler.step()
+            if scheduler_name == "plateau":
+                scheduler.step(val_loss)
+            elif not step_scheduler_per_batch:
+                scheduler.step()
 
         epoch_time = time.perf_counter() - epoch_start
         epoch_times.append(epoch_time)

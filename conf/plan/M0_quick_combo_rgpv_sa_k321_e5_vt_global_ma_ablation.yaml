@@ -1,0 +1,88 @@
+plan_id: M0_quick_combo_rgpv_sa_k321_e5_vt_global_ma_ablation
+
+runs:
+  # Baseline for this ablation: output-space residual-gated fuse (no global MA branch)
+  - id_template: "SUP-{dataset}.M0RGOUT.ablt.k321.e5.vt.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - model=M0
+      - model.multislot.k_per_scale=[3,2,1]
+      - model.multislot.slotizer.mode=pma
+      - model.multislot.pma.kv_include_seeds=true
+      - model.multislot.slot_attn.enabled=true
+      - model.multislot.slot_attn.mode=post
+      - model.multislot.slot_fuse.mode=residual_gated_output
+      - model.multislot.slot_fuse.global_ma.enabled=false
+      - model.d_model=512
+      - model.multislot.d_model=256
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+      - optim.lr=0.0001
+      - optim.scheduler=cosine
+      - optim.min_lr=0.000001
+      - optim.t_max=5
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=m0-rgout-abl-k321-e5-valtest
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1, Exchange]
+      seed: [0]
+
+  # Global MA decomposition ablation:
+  # - combine: add vs gated_add
+  # - kernel_size: short/medium/long smoothing windows
+  - id_template: "SUP-{dataset}.M0RGPKVSA.gma.{combine}.mk{ma_kernel}.k321.e5.vt.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - model=M0
+      - model.multislot.k_per_scale=[3,2,1]
+      - model.multislot.slotizer.mode=pma
+      - model.multislot.pma.kv_include_seeds=true
+      - model.multislot.slot_attn.enabled=true
+      - model.multislot.slot_attn.mode=post
+      - model.multislot.slot_fuse.mode=residual_gated_output
+      - model.multislot.slot_fuse.global_ma.enabled=true
+      - model.multislot.slot_fuse.global_ma.combine={combine}
+      - model.multislot.slot_fuse.global_ma.kernel_size={ma_kernel}
+      - model.d_model=512
+      - model.multislot.d_model=256
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+      - optim.lr=0.0001
+      - optim.scheduler=cosine
+      - optim.min_lr=0.000001
+      - optim.t_max=5
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=m0-rgout+gma-{combine}-mk{ma_kernel}-k321-e5-valtest
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1, Exchange]
+      combine: [gated_add, add]
+      ma_kernel: [7, 25, 49]
+      seed: [0]
+
+ops: []
+cmps: []
+aggs: []

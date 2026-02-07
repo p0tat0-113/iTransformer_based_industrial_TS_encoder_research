@@ -10,10 +10,108 @@ def _ceil_div(a: int, b: int) -> int:
     return (a + b - 1) // b
 
 
-class CausalConvBlock1D(nn.Module):
-    """Causal conv over the patch-index axis (m_p) without changing length."""
+def _moving_average_1d(x: torch.Tensor, kernel_size: int) -> torch.Tensor:
+    """Replicate-padded moving average over time axis.
 
-    def __init__(self, d_model: int, *, kernel_size: int, layers: int, dilation: int, dropout: float):
+    x: [B, L, N]
+    """
+    k = int(kernel_size)
+    if k <= 1:
+        return x
+    pad_total = k - 1
+    left = pad_total // 2
+    right = pad_total - left
+    xt = x.permute(0, 2, 1)  # [B, N, L]
+    xt = F.pad(xt, (left, right), mode="replicate")
+    trend = F.avg_pool1d(xt, kernel_size=k, stride=1)
+    return trend.permute(0, 2, 1)
+
+
+def _sigmoid01_torch(x: torch.Tensor, *, k: float, x0: float) -> torch.Tensor:
+    """Sigmoid mapped to [0, 1] on x in [0, 1]."""
+    s = torch.sigmoid(k * (x - x0))
+    s0 = torch.sigmoid(torch.tensor(k * (0.0 - x0), dtype=x.dtype, device=x.device))
+    s1 = torch.sigmoid(torch.tensor(k * (1.0 - x0), dtype=x.dtype, device=x.device))
+    return (s - s0) / (s1 - s0 + 1e-12)
+
+
+def _hgate_t0_from_pred_len(pred_len: int) -> int:
+    """Map pred_len to sigmoid center index for conservative long-horizon bias init."""
+    l_min, l_max = 96, 720
+    t0_at_lmax = 350
+    if pred_len <= l_min:
+        return max(1, pred_len - 1)
+    t0_lmin = l_min - 1
+    alpha = (pred_len - l_min) / float(l_max - l_min)
+    t0 = int(round((1.0 - alpha) * t0_lmin + alpha * t0_at_lmax))
+    return int(min(max(t0, 1), pred_len - 1))
+
+
+def _make_hgate_bias_schedule(
+    *,
+    pred_len: int,
+    init_start: float,
+    init_end: float,
+    schedule: str,
+) -> torch.Tensor:
+    """Create horizon-gate bias initialization curve."""
+    if pred_len < 2:
+        return torch.tensor([init_start], dtype=torch.float32)
+    if schedule == "linear":
+        return torch.linspace(init_start, init_end, steps=pred_len)
+    if schedule != "sigmix_v1":
+        raise ValueError(f"Unsupported horizon_gate.init_schedule: {schedule}")
+
+    # Fixed-hparam schedule proposed by experiment notes:
+    # only pred_len + init_start are used; init_end is intentionally ignored.
+    l_max = 720.0
+    delta_max = 6.0
+    q = 2.0
+    a_min = 0.02
+    a_max = 0.10
+    r_a = 1.2
+    p = 2.4
+    k = 18.0
+
+    frac_l = pred_len / l_max
+    delta = delta_max * (frac_l**q)
+    a = a_min + (a_max - a_min) * (frac_l**r_a)
+    a = float(min(max(a, 0.0), 0.95))
+
+    t0 = _hgate_t0_from_pred_len(pred_len)
+    x0 = t0 / float(pred_len - 1)
+    x = torch.linspace(0.0, 1.0, pred_len, dtype=torch.float32)
+    soft = x.pow(p)
+    steep = _sigmoid01_torch(x, k=k, x0=x0)
+
+    d_raw = a * soft + (1.0 - a) * steep
+    d = (d_raw - d_raw[0]) / (d_raw[-1] - d_raw[0] + 1e-12)
+    return init_start - delta * d
+
+
+class CausalConvBlock1D(nn.Module):
+    """Conv over patch-index axis (m_p) with configurable padding mode.
+
+    padding_mode:
+    - causal: left-pad only (strictly past-to-current)
+    - same: symmetric/asymmetric same padding (bidirectional context in lookback)
+
+    conv_type:
+    - standard: regular Conv1d(d->d, k)
+    - dwsep: depthwise Conv1d(groups=d) + pointwise Conv1d(1x1)
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        *,
+        kernel_size: int,
+        layers: int,
+        dilation: int,
+        dropout: float,
+        padding_mode: str = "causal",
+        conv_type: str = "standard",
+    ):
         super().__init__()
         if layers <= 0:
             raise ValueError("temporal_conv.layers must be >= 1")
@@ -24,18 +122,46 @@ class CausalConvBlock1D(nn.Module):
 
         self.kernel_size = int(kernel_size)
         self.dilation = int(dilation)
+        self.padding_mode = str(padding_mode or "causal").lower()
+        if self.padding_mode not in ("causal", "same"):
+            raise ValueError(
+                f"temporal_conv.padding_mode must be one of: causal, same (got {self.padding_mode})"
+            )
+        self.conv_type = str(conv_type or "standard").lower()
+        if self.conv_type not in ("standard", "dwsep"):
+            raise ValueError(
+                f"temporal_conv.type must be one of: standard, dwsep (got {self.conv_type})"
+            )
         self.ln = nn.LayerNorm(d_model)
-        self.convs = nn.ModuleList(
-            [
-                nn.Conv1d(
-                    in_channels=d_model,
-                    out_channels=d_model,
-                    kernel_size=self.kernel_size,
-                    dilation=self.dilation,
-                )
-                for _ in range(int(layers))
-            ]
-        )
+        if self.conv_type == "standard":
+            self.convs = nn.ModuleList(
+                [
+                    nn.Conv1d(
+                        in_channels=d_model,
+                        out_channels=d_model,
+                        kernel_size=self.kernel_size,
+                        dilation=self.dilation,
+                    )
+                    for _ in range(int(layers))
+                ]
+            )
+            self.pointwise_convs = None
+        else:
+            self.convs = nn.ModuleList(
+                [
+                    nn.Conv1d(
+                        in_channels=d_model,
+                        out_channels=d_model,
+                        kernel_size=self.kernel_size,
+                        dilation=self.dilation,
+                        groups=d_model,
+                    )
+                    for _ in range(int(layers))
+                ]
+            )
+            self.pointwise_convs = nn.ModuleList(
+                [nn.Conv1d(in_channels=d_model, out_channels=d_model, kernel_size=1) for _ in range(int(layers))]
+            )
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -47,10 +173,17 @@ class CausalConvBlock1D(nn.Module):
         y = self.ln(x)
         y = y.reshape(bsz * tok, m, dim).transpose(1, 2)  # [B*T, d, m]
 
-        pad = (self.kernel_size - 1) * self.dilation
+        total_pad = (self.kernel_size - 1) * self.dilation
+        if self.padding_mode == "causal":
+            left_pad, right_pad = total_pad, 0
+        else:
+            left_pad = total_pad // 2
+            right_pad = total_pad - left_pad
         for i, conv in enumerate(self.convs):
-            y = F.pad(y, (pad, 0))  # left pad only (causal)
+            y = F.pad(y, (left_pad, right_pad))
             y = conv(y)
+            if self.pointwise_convs is not None:
+                y = self.pointwise_convs[i](y)
             if i != len(self.convs) - 1:
                 y = F.gelu(y)
             y = self.dropout(y)
@@ -157,7 +290,16 @@ class ResidualGatedFuse(nn.Module):
         fused = baseline + g * sum_i alpha_i * delta_i
     """
 
-    def __init__(self, d_model: int, *, k_total: int, baseline_idx: int, hidden: int, dropout: float):
+    def __init__(
+        self,
+        d_model: int,
+        *,
+        k_total: int,
+        baseline_idx: int,
+        hidden: int,
+        dropout: float,
+        extra_slot_dropout: float = 0.0,
+    ):
         super().__init__()
         self.k_total = int(k_total)
         self.baseline_idx = int(baseline_idx)
@@ -171,6 +313,11 @@ class ResidualGatedFuse(nn.Module):
         if hidden <= 0:
             raise ValueError("hidden must be >= 1")
         dropout = float(dropout)
+        self.extra_slot_dropout = float(extra_slot_dropout)
+        if self.extra_slot_dropout < 0.0 or self.extra_slot_dropout >= 1.0:
+            raise ValueError(
+                f"slot_fuse.extra_slot_dropout must be in [0, 1), got {self.extra_slot_dropout}"
+            )
 
         # score_i = MLP([u_L ; extra_i ; (extra_i - u_L)]) -> scalar
         self.score_mlp = nn.Sequential(
@@ -182,7 +329,7 @@ class ResidualGatedFuse(nn.Module):
         self.gate = nn.Linear(int(d_model), 1)
         nn.init.constant_(self.gate.bias, -2.0)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def compute_alpha_g(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         # x: [B, T, K, d]
         bsz, tok, k, dim = x.shape
         if k != self.k_total:
@@ -198,9 +345,39 @@ class ResidualGatedFuse(nn.Module):
         delta = extras - base  # [B, T, K-1, d]
         feat = torch.cat([base, extras, delta], dim=-1)  # [B, T, K-1, 3d]
         scores = self.score_mlp(feat).squeeze(-1)  # [B, T, K-1]
-        alpha = torch.softmax(scores, dim=2).unsqueeze(-1)  # [B, T, K-1, 1]
-        corr = (alpha * delta).sum(dim=2)  # [B, T, d]
+        if self.training and self.extra_slot_dropout > 0.0:
+            # Drop only extra slots and renormalize among remaining extras.
+            keep = torch.rand_like(scores) > self.extra_slot_dropout  # [B, T, K-1]
+            all_dropped = ~keep.any(dim=2, keepdim=True)  # [B, T, 1]
+            if all_dropped.any():
+                # Ensure at least one extra stays active per token.
+                max_idx = scores.argmax(dim=2, keepdim=True)  # [B, T, 1]
+                rescue = torch.zeros_like(keep)
+                rescue.scatter_(2, max_idx, True)
+                keep = keep | (all_dropped.expand_as(keep) & rescue)
+            masked_scores = scores.masked_fill(~keep, -1e9)
+            alpha = torch.softmax(masked_scores, dim=2).unsqueeze(-1)  # [B, T, K-1, 1]
+        else:
+            alpha = torch.softmax(scores, dim=2).unsqueeze(-1)  # [B, T, K-1, 1]
         g = torch.sigmoid(self.gate(baseline))  # [B, T, 1]
+        return alpha, g
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [B, T, K, d]
+        bsz, tok, k, dim = x.shape
+        if k != self.k_total:
+            raise ValueError(f"Expected K={self.k_total}, got K={k}")
+
+        baseline = x[:, :, self.baseline_idx, :]  # [B, T, d]
+        extras = torch.cat(
+            [x[:, :, : self.baseline_idx, :], x[:, :, self.baseline_idx + 1 :, :]],
+            dim=2,
+        )  # [B, T, K-1, d]
+
+        base = baseline.unsqueeze(2).expand_as(extras)  # [B, T, K-1, d]
+        delta = extras - base  # [B, T, K-1, d]
+        alpha, g = self.compute_alpha_g(x)
+        corr = (alpha * delta).sum(dim=2)  # [B, T, d]
         return baseline + g * corr
 
 
@@ -347,6 +524,14 @@ class MultiScaleSlotEmbedding(nn.Module):
         self.slotizer_mode = str(getattr(slotizer_cfg, "mode", "pma") or "pma").lower()
         if self.slotizer_mode not in ("pma", "mean"):
             raise ValueError(f"Unsupported model.multislot.slotizer.mode: {self.slotizer_mode}")
+        self.slotizer_share_across_scales = bool(getattr(slotizer_cfg, "share_across_scales", False))
+        if self.slotizer_share_across_scales and self.slotizer_mode != "pma":
+            raise ValueError("model.multislot.slotizer.share_across_scales=true requires slotizer.mode=pma")
+        post_slot_attn_cfg = getattr(slotizer_cfg, "post_slot_attn", None)
+        self.post_slot_attn_enabled = bool(getattr(post_slot_attn_cfg, "enabled", False))
+        self.post_slot_attn_share_across_scales = bool(
+            getattr(post_slot_attn_cfg, "share_across_scales", True)
+        )
 
         div_cfg = getattr(ms, "diversity", None)
         self.div_enabled = bool(getattr(div_cfg, "enabled", False))
@@ -362,11 +547,16 @@ class MultiScaleSlotEmbedding(nn.Module):
         ksize = int(conv_cfg.kernel_size)
         layers = int(conv_cfg.layers)
         dilation = int(conv_cfg.dilation)
+        padding_mode = str(getattr(conv_cfg, "padding_mode", "causal") or "causal")
+        conv_type = str(getattr(conv_cfg, "type", "standard") or "standard")
 
         pma_cfg = ms.pma
         pma_heads = int(pma_cfg.n_heads)
         use_ffn = bool(getattr(pma_cfg, "ffn", True))
         kv_include_seeds = bool(getattr(pma_cfg, "kv_include_seeds", False))
+        post_slot_attn_heads = int(getattr(post_slot_attn_cfg, "n_heads", pma_heads) or pma_heads)
+        if self.post_slot_attn_enabled and self.slotizer_mode != "pma":
+            raise ValueError("model.multislot.slotizer.post_slot_attn.enabled=true requires slotizer.mode=pma")
 
         self.patch_proj = nn.ModuleDict()
         self.pos_emb = nn.ParameterDict()
@@ -374,6 +564,25 @@ class MultiScaleSlotEmbedding(nn.Module):
         self.seeds = nn.ParameterDict()
         self.temporal_enc = nn.ModuleDict()
         self.slotizer = nn.ModuleDict()
+        self.slotizer_shared = None
+        self.post_slot_attn = nn.ModuleDict()
+        self.post_slot_attn_shared = None
+
+        if self.slotizer_mode == "pma" and self.slotizer_share_across_scales:
+            self.slotizer_shared = PMASlotizer(
+                self.d_model,
+                n_heads=pma_heads,
+                d_ff=int(cfg.model.d_ff),
+                dropout=self.dropout,
+                use_ffn=use_ffn,
+                kv_include_seeds=kv_include_seeds,
+            )
+        if self.post_slot_attn_enabled and self.post_slot_attn_share_across_scales:
+            self.post_slot_attn_shared = SlotSelfAttention(
+                self.d_model,
+                n_heads=post_slot_attn_heads,
+                dropout=self.dropout,
+            )
 
         for p, k in zip(self.scales, self.k_per_scale):
             key = str(p)
@@ -399,16 +608,25 @@ class MultiScaleSlotEmbedding(nn.Module):
                 layers=layers,
                 dilation=dilation,
                 dropout=self.dropout,
+                padding_mode=padding_mode,
+                conv_type=conv_type,
             )
             if self.slotizer_mode == "pma":
-                self.slotizer[key] = PMASlotizer(
-                    self.d_model,
-                    n_heads=pma_heads,
-                    d_ff=int(cfg.model.d_ff),
-                    dropout=self.dropout,
-                    use_ffn=use_ffn,
-                    kv_include_seeds=kv_include_seeds,
-                )
+                if not self.slotizer_share_across_scales:
+                    self.slotizer[key] = PMASlotizer(
+                        self.d_model,
+                        n_heads=pma_heads,
+                        d_ff=int(cfg.model.d_ff),
+                        dropout=self.dropout,
+                        use_ffn=use_ffn,
+                        kv_include_seeds=kv_include_seeds,
+                    )
+                if self.post_slot_attn_enabled and k > 1 and not self.post_slot_attn_share_across_scales:
+                    self.post_slot_attn[key] = SlotSelfAttention(
+                        self.d_model,
+                        n_heads=post_slot_attn_heads,
+                        dropout=self.dropout,
+                    )
             else:
                 self.slotizer[key] = MeanSlotizer(k)
 
@@ -448,7 +666,13 @@ class MultiScaleSlotEmbedding(nn.Module):
 
             emb = self.temporal_enc[key](emb)
             if self.slotizer_mode == "pma":
-                slots, attn_w = self.slotizer[key](emb, self.seeds[key], need_weights=div_on)  # [B, T, K_p, d]
+                slotizer = self.slotizer_shared if self.slotizer_share_across_scales else self.slotizer[key]
+                slots, attn_w = slotizer(emb, self.seeds[key], need_weights=div_on)  # [B, T, K_p, d]
+                if self.post_slot_attn_enabled and k > 1:
+                    if self.post_slot_attn_share_across_scales:
+                        slots = self.post_slot_attn_shared(slots)
+                    else:
+                        slots = self.post_slot_attn[key](slots)
             else:
                 slots = self.slotizer[key](emb)  # [B, T, K_p, d]
                 attn_w = None
@@ -603,13 +827,82 @@ class ITransformerM0(nn.Module):
         # Slot fuse strategies:
         # - K_total==1: identity (take slot 0)
         # - mlp: concat + MLP
-        # - residual_gated: baseline(p=L) + gated residual corrections from other slots
+        # - residual_gated: baseline(p=L) + gated residual corrections in representation space
+        # - residual_gated_output: per-slot projectors, then gated residual corrections in output space
+        # - scale_flatten_mean: per-scale flatten(K_p*d)->pred heads, then mean over scales
         # - select_global: use p=L slot only (no fuse)
         fuse_cfg = cfg.model.multislot.slot_fuse
         fuse_mode = str(getattr(fuse_cfg, "mode", "mlp") or "mlp").lower()
         self.fuse_mode = fuse_mode
         self.global_slot_idx = None
         self.slot_fuse = None
+        self.slot_projectors = None
+        self.scale_projectors = None
+        self.global_ma_enabled = False
+        self.global_ma_kernel = 0
+        self.global_ma_combine = "gated_add"
+        self.global_ma_tr_proj = None
+        self.global_ma_rs_proj = None
+        self.global_ma_tr_head = None
+        self.global_ma_rs_head = None
+        self.global_ma_gate = None
+        self.output_hgate_enabled = False
+        self.output_hgate_mode = "linear"
+        self.output_hgate_init_schedule = "linear"
+        self.output_hgate_linear = None
+        self.output_hgate_bias = None
+        self.output_halpha_enabled = False
+        self.output_halpha_hidden = 0
+        self.output_halpha_mlp = None
+        fuse_extra_dropout = float(getattr(fuse_cfg, "extra_slot_dropout", 0.0) or 0.0)
+        hgate_cfg = getattr(fuse_cfg, "horizon_gate", None)
+        self.output_hgate_enabled = bool(getattr(hgate_cfg, "enabled", False))
+        self.output_hgate_mode = str(getattr(hgate_cfg, "mode", "linear") or "linear").lower()
+        if self.output_hgate_mode not in ("linear", "bias"):
+            raise ValueError(
+                "model.multislot.slot_fuse.horizon_gate.mode must be one of: linear, bias "
+                f"(got {self.output_hgate_mode})"
+        )
+        self.output_hgate_init_schedule = str(getattr(hgate_cfg, "init_schedule", "linear") or "linear").lower()
+        if self.output_hgate_init_schedule not in ("linear", "sigmix_v1"):
+            raise ValueError(
+                "model.multislot.slot_fuse.horizon_gate.init_schedule must be one of: linear, sigmix_v1 "
+                f"(got {self.output_hgate_init_schedule})"
+            )
+        output_hgate_init_start = float(getattr(hgate_cfg, "init_start", -2.0))
+        output_hgate_init_end = float(getattr(hgate_cfg, "init_end", -4.0))
+        halpha_cfg = getattr(fuse_cfg, "horizon_alpha", None)
+        self.output_halpha_enabled = bool(getattr(halpha_cfg, "enabled", False))
+        self.output_halpha_hidden = int(getattr(halpha_cfg, "hidden", 16) or 16)
+        if self.output_halpha_enabled and self.output_halpha_hidden <= 0:
+            raise ValueError(
+                "model.multislot.slot_fuse.horizon_alpha.hidden must be >= 1 "
+                f"(got {self.output_halpha_hidden})"
+            )
+        global_ma_cfg = getattr(fuse_cfg, "global_ma", None)
+        self.global_ma_enabled = bool(getattr(global_ma_cfg, "enabled", False))
+        self.global_ma_kernel = int(getattr(global_ma_cfg, "kernel_size", 25) or 25)
+        self.global_ma_combine = str(getattr(global_ma_cfg, "combine", "gated_add") or "gated_add").lower()
+        if self.global_ma_combine not in ("add", "gated_add"):
+            raise ValueError(
+                f"model.multislot.slot_fuse.global_ma.combine must be one of: add, gated_add (got {self.global_ma_combine})"
+            )
+        if self.global_ma_kernel <= 0:
+            raise ValueError(
+                f"model.multislot.slot_fuse.global_ma.kernel_size must be >= 1 (got {self.global_ma_kernel})"
+            )
+        if self.global_ma_enabled and fuse_mode != "residual_gated_output":
+            raise ValueError(
+                "model.multislot.slot_fuse.global_ma.enabled=true requires slot_fuse.mode=residual_gated_output"
+            )
+        if self.output_hgate_enabled and fuse_mode != "residual_gated_output":
+            raise ValueError(
+                "model.multislot.slot_fuse.horizon_gate.enabled=true requires slot_fuse.mode=residual_gated_output"
+            )
+        if self.output_halpha_enabled and fuse_mode != "residual_gated_output":
+            raise ValueError(
+                "model.multislot.slot_fuse.horizon_alpha.enabled=true requires slot_fuse.mode=residual_gated_output"
+            )
 
         def _find_global_slot_idx() -> int | None:
             offset = 0
@@ -619,7 +912,14 @@ class ITransformerM0(nn.Module):
                 offset += int(kk)
             return None
 
-        if self.k_total > 1:
+        if fuse_mode == "scale_flatten_mean":
+            self.scale_projectors = nn.ModuleList(
+                [
+                    nn.Linear(int(cfg.model.d_model) * int(kk), int(cfg.data.pred_len), bias=True)
+                    for kk in self.enc_embedding.k_per_scale
+                ]
+            )
+        elif self.k_total > 1:
             if fuse_mode == "mlp":
                 self.slot_fuse = SlotFuseMLP(
                     int(cfg.model.d_model),
@@ -637,7 +937,65 @@ class ITransformerM0(nn.Module):
                     baseline_idx=baseline_idx,
                     hidden=int(fuse_cfg.hidden),
                     dropout=float(cfg.model.dropout),
+                    extra_slot_dropout=fuse_extra_dropout,
                 )
+            elif fuse_mode == "residual_gated_output":
+                baseline_idx = _find_global_slot_idx()
+                if baseline_idx is None:
+                    if self.global_ma_enabled:
+                        raise ValueError(
+                            "global_ma decomposition requires a global scale p=seq_len in model.multislot.scales"
+                        )
+                    baseline_idx = self.k_total - 1
+                self.slot_fuse = ResidualGatedFuse(
+                    int(cfg.model.d_model),
+                    k_total=self.k_total,
+                    baseline_idx=baseline_idx,
+                    hidden=int(fuse_cfg.hidden),
+                    dropout=float(cfg.model.dropout),
+                    extra_slot_dropout=fuse_extra_dropout,
+                )
+                self.slot_projectors = nn.ModuleList(
+                    [nn.Linear(int(cfg.model.d_model), int(cfg.data.pred_len), bias=True) for _ in range(self.k_total)]
+                )
+                if self.output_halpha_enabled:
+                    self.output_halpha_mlp = nn.Sequential(
+                        nn.Linear(3, self.output_halpha_hidden),
+                        nn.GELU(),
+                        nn.Dropout(float(cfg.model.dropout)),
+                        nn.Linear(self.output_halpha_hidden, 1),
+                    )
+                    # Start from uniform alpha (all scores=0) to avoid random mixing at init.
+                    for mod in self.output_halpha_mlp.modules():
+                        if isinstance(mod, nn.Linear):
+                            nn.init.zeros_(mod.weight)
+                            if mod.bias is not None:
+                                nn.init.zeros_(mod.bias)
+                if self.output_hgate_enabled:
+                    pred_len = int(cfg.data.pred_len)
+                    hbias = _make_hgate_bias_schedule(
+                        pred_len=pred_len,
+                        init_start=output_hgate_init_start,
+                        init_end=output_hgate_init_end,
+                        schedule=self.output_hgate_init_schedule,
+                    )
+                    if self.output_hgate_mode == "linear":
+                        self.output_hgate_linear = nn.Linear(int(cfg.model.d_model), pred_len)
+                        nn.init.zeros_(self.output_hgate_linear.weight)
+                        with torch.no_grad():
+                            self.output_hgate_linear.bias.copy_(hbias)
+                    else:
+                        self.output_hgate_bias = nn.Parameter(hbias)
+                if self.global_ma_enabled:
+                    d_model = int(cfg.model.d_model)
+                    pred_len = int(cfg.data.pred_len)
+                    self.global_ma_tr_proj = nn.Linear(self.seq_len, d_model)
+                    self.global_ma_rs_proj = nn.Linear(self.seq_len, d_model)
+                    self.global_ma_tr_head = nn.Linear(d_model, pred_len)
+                    self.global_ma_rs_head = nn.Linear(d_model, pred_len)
+                    if self.global_ma_combine == "gated_add":
+                        self.global_ma_gate = nn.Linear(d_model, 1)
+                        nn.init.constant_(self.global_ma_gate.bias, -2.0)
             elif fuse_mode == "select_global":
                 self.global_slot_idx = _find_global_slot_idx()
                 if self.global_slot_idx is None:
@@ -779,11 +1137,106 @@ class ITransformerM0(nn.Module):
             if self.global_slot_idx is None:
                 raise RuntimeError("global_slot_idx is not set for select_global mode")
             fused = enc_x[:, :, self.global_slot_idx, :]  # [B, N, d]
+            dec_out = self.projector(fused).permute(0, 2, 1)[:, :, :n_vars]
+        elif self.fuse_mode == "scale_flatten_mean":
+            if self.scale_projectors is None:
+                raise RuntimeError("scale_projectors are not initialized for scale_flatten_mean")
+
+            preds = []
+            start = 0
+            for kk, head in zip(self.enc_embedding.k_per_scale, self.scale_projectors):
+                end = start + int(kk)
+                slots_s = enc_x[:, :, start:end, :]  # [B, N, K_p, d]
+                flat = slots_s.contiguous().reshape(
+                    slots_s.size(0), slots_s.size(1), int(kk) * slots_s.size(-1)
+                )  # [B, N, K_p*d]
+                preds.append(head(flat))  # [B, N, pred_len]
+                start = end
+            pred_mean = torch.stack(preds, dim=2).mean(dim=2)  # [B, N, pred_len]
+            dec_out = pred_mean.permute(0, 2, 1)[:, :, :n_vars]
+        elif self.fuse_mode == "residual_gated_output":
+            if self.slot_projectors is None or self.slot_fuse is None:
+                raise RuntimeError("slot projectors / slot_fuse are not initialized for residual_gated_output")
+
+            preds = [head(enc_x[:, :, i, :]) for i, head in enumerate(self.slot_projectors)]
+            pred_slots = torch.stack(preds, dim=2)  # [B, N, K, pred_len]
+            baseline_idx = int(self.slot_fuse.baseline_idx)
+            if self.global_ma_enabled:
+                if (
+                    self.global_ma_tr_proj is None
+                    or self.global_ma_rs_proj is None
+                    or self.global_ma_tr_head is None
+                    or self.global_ma_rs_head is None
+                ):
+                    raise RuntimeError("global MA modules are not initialized")
+                trend = _moving_average_1d(x_enc, self.global_ma_kernel)  # [B, L, N]
+                resid = x_enc - trend  # [B, L, N]
+                u_tr = self.global_ma_tr_proj(trend.permute(0, 2, 1))  # [B, N, d]
+                u_rs = self.global_ma_rs_proj(resid.permute(0, 2, 1))  # [B, N, d]
+                y_tr = self.global_ma_tr_head(u_tr)  # [B, N, pred_len]
+                y_rs = self.global_ma_rs_head(u_rs)  # [B, N, pred_len]
+                if self.global_ma_combine == "gated_add":
+                    if self.global_ma_gate is None:
+                        raise RuntimeError("global MA gate is not initialized")
+                    g0 = torch.sigmoid(self.global_ma_gate(enc_x[:, :, baseline_idx, :]))  # [B, N, 1]
+                    baseline = y_tr + g0 * y_rs
+                else:
+                    baseline = y_tr + y_rs
+            else:
+                baseline = pred_slots[:, :, baseline_idx, :]  # [B, N, pred_len]
+            extras = torch.cat(
+                [pred_slots[:, :, :baseline_idx, :], pred_slots[:, :, baseline_idx + 1 :, :]],
+                dim=2,
+            )  # [B, N, K-1, pred_len]
+            delta = extras - baseline.unsqueeze(2)  # [B, N, K-1, pred_len]
+
+            if self.output_halpha_enabled:
+                if self.output_halpha_mlp is None:
+                    raise RuntimeError("output horizon alpha MLP is not initialized")
+                base = baseline.unsqueeze(2).expand_as(extras)  # [B, N, K-1, pred_len]
+                dlt = extras - base  # [B, N, K-1, pred_len]
+                feat = torch.stack([base, extras, dlt], dim=-1)  # [B, N, K-1, pred_len, 3]
+                scores = self.output_halpha_mlp(feat).squeeze(-1)  # [B, N, K-1, pred_len]
+                extra_p = float(getattr(self.slot_fuse, "extra_slot_dropout", 0.0))
+                if self.training and extra_p > 0.0:
+                    keep = torch.rand_like(scores[..., 0]) > extra_p  # [B, N, K-1]
+                    all_dropped = ~keep.any(dim=2, keepdim=True)  # [B, N, 1]
+                    if all_dropped.any():
+                        max_idx = scores.mean(dim=-1).argmax(dim=2, keepdim=True)  # [B, N, 1]
+                        rescue = torch.zeros_like(keep)
+                        rescue.scatter_(2, max_idx, True)
+                        keep = keep | (all_dropped.expand_as(keep) & rescue)
+                    masked_scores = scores.masked_fill(~keep.unsqueeze(-1), -1e9)
+                    alpha = torch.softmax(masked_scores, dim=2)  # [B, N, K-1, pred_len]
+                else:
+                    alpha = torch.softmax(scores, dim=2)  # [B, N, K-1, pred_len]
+            else:
+                alpha, g = self.slot_fuse.compute_alpha_g(enc_x)  # [B, N, K-1, 1], [B, N, 1]
+
+            corr = (alpha * delta).sum(dim=2)  # [B, N, pred_len]
+            if self.output_hgate_enabled:
+                if self.output_hgate_mode == "linear":
+                    if self.output_hgate_linear is None:
+                        raise RuntimeError("horizon gate linear is not initialized")
+                    g_h = torch.sigmoid(
+                        self.output_hgate_linear(enc_x[:, :, baseline_idx, :])
+                    )  # [B, N, pred_len]
+                else:
+                    if self.output_hgate_bias is None:
+                        raise RuntimeError("horizon gate bias is not initialized")
+                    g_h = torch.sigmoid(self.output_hgate_bias).view(1, 1, -1)  # [1, 1, pred_len]
+                fused_pred = baseline + g_h * corr  # [B, N, pred_len]
+            else:
+                if self.output_halpha_enabled:
+                    g = torch.sigmoid(self.slot_fuse.gate(enc_x[:, :, baseline_idx, :]))  # [B, N, 1]
+                fused_pred = baseline + g * corr  # [B, N, pred_len]
+            dec_out = fused_pred.permute(0, 2, 1)[:, :, :n_vars]
         elif self.slot_fuse is None:
             fused = enc_x[:, :, 0, :]  # [B, N, d]
+            dec_out = self.projector(fused).permute(0, 2, 1)[:, :, :n_vars]
         else:
             fused = self.slot_fuse(enc_x)  # [B, N, d]
-        dec_out = self.projector(fused).permute(0, 2, 1)[:, :, :n_vars]
+            dec_out = self.projector(fused).permute(0, 2, 1)[:, :, :n_vars]
 
         if self.use_norm:
             dec_out = dec_out * stdev[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1)
