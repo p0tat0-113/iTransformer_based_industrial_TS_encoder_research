@@ -1,0 +1,38 @@
+plan_id: P0_predlen_sweep_e10_vt_adam_steplr
+
+runs:
+  # P0 baseline pred_len sweep with Adam + StepLR.
+  - id_template: "SUP-{dataset}.P0.adam.steplr.e10.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - model=P0
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=p0-adam-steplr-e10-valtest-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [Weather, ETTh1, ETTh2, ETTm1, ETTm2, Exchange]
+      pred_len: [96,192,336,720]
+      seed: [0]
+
+ops: []
+cmps: []
+aggs: []

@@ -1,9 +1,9 @@
-plan_id: M0_quick_combo_rgpv_sa_outfuse_sharedpma_hgatebias_linear_k321_e5_vt_el1_predlen
+plan_id: M0_quick_combo_rgpv_sa_outfuse_sharedpma_hgatebias_linear_k321_e20_vt_el1_predlen
 
 runs:
   # Shared-PMA + e_layers=1 + output-space residual-gated fusion
   # Add horizon-wise bias gate with linear init schedule.
-  - id_template: "SUP-{dataset}.M0RGOUTHGBL.sharedpma.el1.k321.e5.vt.pr{pred_len}.sd{seed}"
+  - id_template: "SUP-{dataset}.M0RGOUTHGBL.sharedpma.el1.k321.e20.vt.pr{pred_len}.sd{seed}"
     entry: downstream
     overrides:
       - data={dataset}
@@ -27,13 +27,12 @@ runs:
       - train=downstream
       - train.mode=ft
       - train.freeze_epochs=0
-      - train.epochs=10
+      - train.epochs=20
       - train.batch_size=128
       - train.patience=0
       - train.ssl_ckpt_path=null
       - train.val_flag=test
-      - optim.name=adamw
-      - optim.weight_decay=0.01
+      - optim.name=adam
       - optim.scheduler=onecycle
       - optim.onecycle_max_lr=0.0003
       - optim.onecycle_pct_start=0.3
@@ -47,10 +46,10 @@ runs:
       - runtime.seed={seed}
       - runtime.deterministic=true
       - run.code=SUP-{dataset}
-      - run.hparams_tag=m0-rgout+hgatebias+linear+sharedpma+pkv+post-sa-k321-e5-valtest-el1-pr{pred_len}
+      - run.hparams_tag=m0-rgout+hgatebias+linear+sharedpma+pkv+post-sa-k321-e20-valtest-el1-pr{pred_len}
       - run.id={id}
     sweep:
-      dataset: [Weather, ETTh1, Exchange]
+      dataset: [Weather, ETTh1, ETTh2, ETTm1, ETTm2, Exchange]
       pred_len: [96,192,336,720]
       seed: [0]
 

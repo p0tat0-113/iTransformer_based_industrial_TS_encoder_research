@@ -343,6 +343,18 @@ def main(cfg) -> None:
                 T_max=t_max,
                 eta_min=min_lr,
             )
+        elif scheduler_name == "steplr":
+            step_size = int(getattr(cfg.optim, "step_size", 10) or 10)
+            gamma = float(getattr(cfg.optim, "gamma", 0.5) or 0.5)
+            if step_size <= 0:
+                raise ValueError(f"optim.step_size must be >= 1 (got {step_size})")
+            if not (0.0 < gamma <= 1.0):
+                raise ValueError(f"optim.gamma must be in (0, 1] (got {gamma})")
+            scheduler = torch.optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=step_size,
+                gamma=gamma,
+            )
         elif scheduler_name == "plateau":
             plateau_mode = str(getattr(cfg.optim, "plateau_mode", "min") or "min").lower()
             plateau_factor = float(getattr(cfg.optim, "plateau_factor", 0.5) or 0.5)
