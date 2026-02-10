@@ -74,6 +74,60 @@ def apply_downsample(x: torch.Tensor, factor: int) -> torch.Tensor:
     return x_up
 
 
+def apply_time_shuffle_full(
+    x: torch.Tensor,
+    x_mark: torch.Tensor | None = None,
+    *,
+    seed: int | None = None,
+    per_sample: bool = True,
+    apply_to: str = "x_and_mark",
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    if apply_to not in ("x_and_mark", "x_only"):
+        raise ValueError(f"apply_to must be one of: x_and_mark, x_only (got {apply_to})")
+
+    bsz, seq_len, n_vars = x.shape
+    if seq_len <= 1:
+        return x, x_mark
+
+    gen = None
+    if seed is not None:
+        gen = torch.Generator(device="cpu")
+        gen.manual_seed(int(seed))
+
+    if per_sample:
+        perms = [torch.randperm(seq_len, generator=gen, device="cpu") for _ in range(bsz)]
+        idx = torch.stack(perms, dim=0).to(device=x.device)  # [B, L]
+    else:
+        perm = torch.randperm(seq_len, generator=gen, device="cpu").to(device=x.device)
+        idx = perm.view(1, -1).expand(bsz, -1)  # [B, L]
+
+    x_shuf = x.gather(1, idx.unsqueeze(-1).expand(-1, -1, n_vars))
+    x_mark_shuf = x_mark
+    if x_mark is not None and apply_to == "x_and_mark":
+        x_mark_shuf = x_mark.gather(1, idx.unsqueeze(-1).expand(-1, -1, x_mark.size(-1)))
+    return x_shuf, x_mark_shuf
+
+
+def apply_time_half_swap(
+    x: torch.Tensor,
+    x_mark: torch.Tensor | None = None,
+    *,
+    apply_to: str = "x_and_mark",
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    if apply_to not in ("x_and_mark", "x_only"):
+        raise ValueError(f"apply_to must be one of: x_and_mark, x_only (got {apply_to})")
+
+    seq_len = int(x.size(1))
+    if seq_len <= 1:
+        return x, x_mark
+    mid = seq_len // 2
+    x_swap = torch.cat([x[:, mid:, :], x[:, :mid, :]], dim=1)
+    x_mark_swap = x_mark
+    if x_mark is not None and apply_to == "x_and_mark":
+        x_mark_swap = torch.cat([x_mark[:, mid:, :], x_mark[:, :mid, :]], dim=1)
+    return x_swap, x_mark_swap
+
+
 def measure_inference_time(model, x_enc, x_mark, meta_emb=None, repeats: int = 10) -> float:
     # returns avg time per forward (ms)
     if x_mark is None:

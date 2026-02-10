@@ -131,8 +131,11 @@ dmypy.json
 .pyre/
 
 # dataset
-/dataset
+#/dataset
+/dataset/traffic/traffic.csv
+/dataset/electricity/electricity.csv
+/dataset/PEMS/*.npz
 
 # experiments results
-# /artifacts
+/artifacts
 /artifacts_backup

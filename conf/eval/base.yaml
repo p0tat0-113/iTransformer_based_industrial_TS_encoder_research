@@ -5,4 +5,11 @@ op_hparams_tag: ""
 on_run_id: ""
 ckpt_path: ""
 op_id: ${ids.op_id}
+split: test
+use_ckpt_data: true
+use_ckpt_model: true
+use_ckpt_metadata: true
 missing_rates: []
+shuffle_seed: null
+shuffle_per_sample: true
+shuffle_apply_to: x_and_mark

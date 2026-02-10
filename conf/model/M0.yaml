@@ -72,6 +72,13 @@ multislot:
   slot_fuse:
     mode: mlp   # mlp | residual_gated | residual_gated_output | scale_flatten_mean | select_global
     hidden: ${model.d_ff}
+    score_mode: full   # full | lowrank (for residual_gated / residual_gated_output scorer)
+    score_rank: 0      # used when score_mode=lowrank
+    alpha_source: repr   # repr | output_attn (for residual_gated_output, when horizon_alpha is disabled)
+    output_attn_rank: 64
+    output_attn_use_delta_key: true
+    output_attn_norm: layernorm   # layernorm | l2 | none
+    output_attn_tau: 1.0
     extra_slot_dropout: 0.0   # train-time dropout on extra slots only (baseline slot is never dropped)
     horizon_gate:
       enabled: false

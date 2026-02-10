@@ -1,16 +1,18 @@
-plan_id: M0_quick_combo_rgpv_sa_outfuse_halpha_k321_e5_vt_pr720
+plan_id: M0_quick_combo_rgpv_sa_outfuse_halpha_sharedpma_k321_e5_vt_el1_pr720
 
 runs:
-  # Output-space residual-gated fusion + horizon-wise alpha (output-based scores)
-  # alpha_{i,h} = softmax_i( score(y_L[h], y_i[h], y_i[h]-y_L[h]) )
-  - id_template: "SUP-{dataset}.M0RGOUTHA.k321.e5.vt.pr{pred_len}.sd{seed}"
+  # Output-space residual-gated fusion + horizon-wise alpha
+  # with shared PMA slotizer weights and single encoder layer.
+  - id_template: "SUP-{dataset}.M0RGOUTHA.sharedpma.el1.k321.e5.vt.pr{pred_len}.sd{seed}"
     entry: downstream
     overrides:
       - data={dataset}
       - data.pred_len={pred_len}
       - model=M0
+      - model.e_layers=1
       - model.multislot.k_per_scale=[3,2,1]
       - model.multislot.slotizer.mode=pma
+      - model.multislot.slotizer.share_across_scales=true
       - model.multislot.pma.kv_include_seeds=true
       - model.multislot.slot_attn.enabled=true
       - model.multislot.slot_attn.mode=post
@@ -27,20 +29,25 @@ runs:
       - train.patience=0
       - train.ssl_ckpt_path=null
       - train.val_flag=test
-      - optim.lr=0.0001
-      - optim.scheduler=cosine
-      - optim.min_lr=0.000001
-      - optim.t_max=5
+      - optim.name=adam
+      - optim.scheduler=onecycle
+      - optim.onecycle_max_lr=0.0003
+      - optim.onecycle_pct_start=0.3
+      - optim.onecycle_anneal_strategy=cos
+      - optim.onecycle_div_factor=25
+      - optim.onecycle_final_div_factor=1000
+      - optim.onecycle_three_phase=false
+      - optim.onecycle_total_steps=0
       - metadata.enabled=false
       - runtime.device=cuda
       - runtime.seed={seed}
       - runtime.deterministic=true
       - run.code=SUP-{dataset}
-      - run.hparams_tag=m0-rgout+halpha_out+pkv+post-sa-k321-e5-valtest-pr{pred_len}
+      - run.hparams_tag=m0-rgout+halpha_out+sharedpma+pkv+post-sa-k321-e5-valtest-el1-pr{pred_len}
       - run.id={id}
     sweep:
-      dataset: [ETTh1]
-      pred_len: [720]
+      dataset: [ETTh1, ETTh2]
+      pred_len: [336,720]
       seed: [0]
 
 ops: []

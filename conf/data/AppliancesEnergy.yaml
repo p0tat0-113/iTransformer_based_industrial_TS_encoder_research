@@ -1,0 +1,13 @@
+name: AppliancesEnergy
+root_path: ./dataset/appliances_energy/
+data_path: energydata_complete.csv
+freq: t
+features: M
+target: Appliances
+seq_len: 96
+label_len: 48
+pred_len: 96
+enc_in: 28
+c_out: 28
+scale: true
+timeenc: 1

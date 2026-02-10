@@ -280,6 +280,23 @@ class SlotFuseMLP(nn.Module):
         return self.net(h)
 
 
+class LowRankLinear(nn.Module):
+    """Low-rank factorized linear layer: W ~= W2 @ W1."""
+
+    def __init__(self, in_features: int, out_features: int, *, rank: int, bias: bool = True):
+        super().__init__()
+        self.in_features = int(in_features)
+        self.out_features = int(out_features)
+        self.rank = int(rank)
+        if self.rank <= 0:
+            raise ValueError(f"rank must be >= 1, got {self.rank}")
+        self.w1 = nn.Linear(self.in_features, self.rank, bias=False)
+        self.w2 = nn.Linear(self.rank, self.out_features, bias=bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.w2(self.w1(x))
+
+
 class ResidualGatedFuse(nn.Module):
     """Baseline (p=L) + gated residual corrections from other slots.
 
@@ -299,6 +316,8 @@ class ResidualGatedFuse(nn.Module):
         hidden: int,
         dropout: float,
         extra_slot_dropout: float = 0.0,
+        score_mode: str = "full",
+        score_rank: int = 0,
     ):
         super().__init__()
         self.k_total = int(k_total)
@@ -318,10 +337,25 @@ class ResidualGatedFuse(nn.Module):
             raise ValueError(
                 f"slot_fuse.extra_slot_dropout must be in [0, 1), got {self.extra_slot_dropout}"
             )
+        self.score_mode = str(score_mode or "full").lower()
+        if self.score_mode not in ("full", "lowrank"):
+            raise ValueError(
+                f"slot_fuse.score_mode must be one of: full, lowrank (got {self.score_mode})"
+            )
+        self.score_rank = int(score_rank)
+        if self.score_mode == "lowrank" and self.score_rank <= 0:
+            raise ValueError(
+                "slot_fuse.score_rank must be >= 1 when slot_fuse.score_mode=lowrank "
+                f"(got {self.score_rank})"
+            )
 
         # score_i = MLP([u_L ; extra_i ; (extra_i - u_L)]) -> scalar
+        if self.score_mode == "lowrank":
+            score_in = LowRankLinear(3 * int(d_model), hidden, rank=self.score_rank, bias=True)
+        else:
+            score_in = nn.Linear(3 * int(d_model), hidden)
         self.score_mlp = nn.Sequential(
-            nn.Linear(3 * int(d_model), hidden),
+            score_in,
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(hidden, 1),
@@ -379,6 +413,104 @@ class ResidualGatedFuse(nn.Module):
         alpha, g = self.compute_alpha_g(x)
         corr = (alpha * delta).sum(dim=2)  # [B, T, d]
         return baseline + g * corr
+
+
+class OutputAttentionScorer(nn.Module):
+    """Compute slot alpha in output space via low-rank attention-style scoring.
+
+    Inputs:
+      - baseline: [B, T, H]
+      - extras:   [B, T, K-1, H]
+    Output:
+      - alpha:    [B, T, K-1, 1]
+    """
+
+    def __init__(
+        self,
+        *,
+        pred_len: int,
+        k_extra: int,
+        rank: int,
+        use_delta_key: bool = True,
+        norm: str = "layernorm",
+        tau: float = 1.0,
+        extra_slot_dropout: float = 0.0,
+    ):
+        super().__init__()
+        self.pred_len = int(pred_len)
+        self.k_extra = int(k_extra)
+        self.rank = int(rank)
+        self.use_delta_key = bool(use_delta_key)
+        self.norm_mode = str(norm or "layernorm").lower()
+        self.tau = float(tau)
+        self.extra_slot_dropout = float(extra_slot_dropout)
+
+        if self.pred_len <= 0:
+            raise ValueError(f"pred_len must be >= 1, got {self.pred_len}")
+        if self.k_extra <= 0:
+            raise ValueError(f"k_extra must be >= 1, got {self.k_extra}")
+        if self.rank <= 0:
+            raise ValueError(f"output_attn_rank must be >= 1, got {self.rank}")
+        if self.norm_mode not in ("layernorm", "l2", "none"):
+            raise ValueError(
+                "slot_fuse.output_attn_norm must be one of: layernorm, l2, none "
+                f"(got {self.norm_mode})"
+            )
+        if self.tau <= 0.0:
+            raise ValueError(f"slot_fuse.output_attn_tau must be > 0, got {self.tau}")
+        if self.extra_slot_dropout < 0.0 or self.extra_slot_dropout >= 1.0:
+            raise ValueError(
+                "slot_fuse.extra_slot_dropout must be in [0, 1), "
+                f"got {self.extra_slot_dropout}"
+            )
+
+        self.norm = nn.LayerNorm(self.pred_len) if self.norm_mode == "layernorm" else None
+        self.q_proj = nn.Linear(self.pred_len, self.rank, bias=True)
+        k_in = self.pred_len * 2 if self.use_delta_key else self.pred_len
+        self.k_proj = nn.Linear(k_in, self.rank, bias=True)
+        self.score_bias = nn.Parameter(torch.zeros(self.k_extra))
+
+    def _apply_norm(self, x: torch.Tensor) -> torch.Tensor:
+        if self.norm_mode == "none":
+            return x
+        if self.norm_mode == "l2":
+            return F.normalize(x, p=2.0, dim=-1, eps=1e-8)
+        return self.norm(x)
+
+    def _slot_softmax(self, scores: torch.Tensor) -> torch.Tensor:
+        # scores: [B, T, K-1]
+        if self.training and self.extra_slot_dropout > 0.0:
+            keep = torch.rand_like(scores) > self.extra_slot_dropout
+            all_dropped = ~keep.any(dim=2, keepdim=True)
+            if all_dropped.any():
+                max_idx = scores.argmax(dim=2, keepdim=True)
+                rescue = torch.zeros_like(keep)
+                rescue.scatter_(2, max_idx, True)
+                keep = keep | (all_dropped.expand_as(keep) & rescue)
+            scores = scores.masked_fill(~keep, -1e9)
+        return torch.softmax(scores, dim=2)
+
+    def forward(self, baseline: torch.Tensor, extras: torch.Tensor) -> torch.Tensor:
+        # baseline: [B, T, H], extras: [B, T, K-1, H]
+        base = baseline.unsqueeze(2).expand_as(extras)
+        delta = extras - base
+
+        base_n = self._apply_norm(base)
+        extras_n = self._apply_norm(extras)
+        delta_n = self._apply_norm(delta)
+
+        q = self.q_proj(self._apply_norm(baseline))  # [B, T, r]
+        if self.use_delta_key:
+            k_in = torch.cat([extras_n, delta_n], dim=-1)  # [B, T, K-1, 2H]
+        else:
+            k_in = extras_n  # [B, T, K-1, H]
+        k = self.k_proj(k_in)  # [B, T, K-1, r]
+
+        denom = (float(self.rank) ** 0.5) * self.tau
+        scores = (q.unsqueeze(2) * k).sum(dim=-1) / denom  # [B, T, K-1]
+        scores = scores + self.score_bias.view(1, 1, -1)
+        alpha = self._slot_softmax(scores).unsqueeze(-1)  # [B, T, K-1, 1]
+        return alpha
 
 
 class SlotSelfAttention(nn.Module):
@@ -854,7 +986,30 @@ class ITransformerM0(nn.Module):
         self.output_halpha_enabled = False
         self.output_halpha_hidden = 0
         self.output_halpha_mlp = None
+        self.output_alpha_source = "repr"
+        self.output_attn_rank = 64
+        self.output_attn_use_delta_key = True
+        self.output_attn_norm = "layernorm"
+        self.output_attn_tau = 1.0
+        self.output_attn_scorer = None
         fuse_extra_dropout = float(getattr(fuse_cfg, "extra_slot_dropout", 0.0) or 0.0)
+        fuse_score_mode = str(getattr(fuse_cfg, "score_mode", "full") or "full").lower()
+        fuse_score_rank = int(getattr(fuse_cfg, "score_rank", 0) or 0)
+        if fuse_score_mode not in ("full", "lowrank"):
+            raise ValueError(
+                "model.multislot.slot_fuse.score_mode must be one of: full, lowrank "
+                f"(got {fuse_score_mode})"
+            )
+        self.output_alpha_source = str(getattr(fuse_cfg, "alpha_source", "repr") or "repr").lower()
+        if self.output_alpha_source not in ("repr", "output_attn"):
+            raise ValueError(
+                "model.multislot.slot_fuse.alpha_source must be one of: repr, output_attn "
+                f"(got {self.output_alpha_source})"
+            )
+        self.output_attn_rank = int(getattr(fuse_cfg, "output_attn_rank", 64) or 64)
+        self.output_attn_use_delta_key = bool(getattr(fuse_cfg, "output_attn_use_delta_key", True))
+        self.output_attn_norm = str(getattr(fuse_cfg, "output_attn_norm", "layernorm") or "layernorm").lower()
+        self.output_attn_tau = float(getattr(fuse_cfg, "output_attn_tau", 1.0) or 1.0)
         hgate_cfg = getattr(fuse_cfg, "horizon_gate", None)
         self.output_hgate_enabled = bool(getattr(hgate_cfg, "enabled", False))
         self.output_hgate_mode = str(getattr(hgate_cfg, "mode", "linear") or "linear").lower()
@@ -903,6 +1058,16 @@ class ITransformerM0(nn.Module):
             raise ValueError(
                 "model.multislot.slot_fuse.horizon_alpha.enabled=true requires slot_fuse.mode=residual_gated_output"
             )
+        if self.output_alpha_source == "output_attn" and fuse_mode != "residual_gated_output":
+            raise ValueError(
+                "model.multislot.slot_fuse.alpha_source=output_attn requires "
+                "slot_fuse.mode=residual_gated_output"
+            )
+        if self.output_halpha_enabled and self.output_alpha_source != "repr":
+            raise ValueError(
+                "model.multislot.slot_fuse.horizon_alpha.enabled=true currently requires "
+                "slot_fuse.alpha_source=repr"
+            )
 
         def _find_global_slot_idx() -> int | None:
             offset = 0
@@ -938,6 +1103,8 @@ class ITransformerM0(nn.Module):
                     hidden=int(fuse_cfg.hidden),
                     dropout=float(cfg.model.dropout),
                     extra_slot_dropout=fuse_extra_dropout,
+                    score_mode=fuse_score_mode,
+                    score_rank=fuse_score_rank,
                 )
             elif fuse_mode == "residual_gated_output":
                 baseline_idx = _find_global_slot_idx()
@@ -954,6 +1121,8 @@ class ITransformerM0(nn.Module):
                     hidden=int(fuse_cfg.hidden),
                     dropout=float(cfg.model.dropout),
                     extra_slot_dropout=fuse_extra_dropout,
+                    score_mode=fuse_score_mode,
+                    score_rank=fuse_score_rank,
                 )
                 self.slot_projectors = nn.ModuleList(
                     [nn.Linear(int(cfg.model.d_model), int(cfg.data.pred_len), bias=True) for _ in range(self.k_total)]
@@ -971,6 +1140,16 @@ class ITransformerM0(nn.Module):
                             nn.init.zeros_(mod.weight)
                             if mod.bias is not None:
                                 nn.init.zeros_(mod.bias)
+                if self.output_alpha_source == "output_attn":
+                    self.output_attn_scorer = OutputAttentionScorer(
+                        pred_len=int(cfg.data.pred_len),
+                        k_extra=self.k_total - 1,
+                        rank=self.output_attn_rank,
+                        use_delta_key=self.output_attn_use_delta_key,
+                        norm=self.output_attn_norm,
+                        tau=self.output_attn_tau,
+                        extra_slot_dropout=fuse_extra_dropout,
+                    )
                 if self.output_hgate_enabled:
                     pred_len = int(cfg.data.pred_len)
                     hbias = _make_hgate_bias_schedule(
@@ -1211,7 +1390,13 @@ class ITransformerM0(nn.Module):
                 else:
                     alpha = torch.softmax(scores, dim=2)  # [B, N, K-1, pred_len]
             else:
-                alpha, g = self.slot_fuse.compute_alpha_g(enc_x)  # [B, N, K-1, 1], [B, N, 1]
+                if self.output_alpha_source == "output_attn":
+                    if self.output_attn_scorer is None:
+                        raise RuntimeError("output attention scorer is not initialized")
+                    alpha = self.output_attn_scorer(baseline, extras)  # [B, N, K-1, 1]
+                    g = torch.sigmoid(self.slot_fuse.gate(enc_x[:, :, baseline_idx, :]))  # [B, N, 1]
+                else:
+                    alpha, g = self.slot_fuse.compute_alpha_g(enc_x)  # [B, N, K-1, 1], [B, N, 1]
 
             corr = (alpha * delta).sum(dim=2)  # [B, N, pred_len]
             if self.output_hgate_enabled:

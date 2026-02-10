@@ -1,9 +1,8 @@
-plan_id: M0_quick_combo_rgpv_sa_outfuse_sharedpma_hgatebias_linear_k321_e20_vt_el1_predlen
+plan_id: M0_quick_combo_rgpv_sa_outfuse_sharedpma_hgatebias_linear_k321_e20_vt_el1_predlen_lowrank_sweep
 
 runs:
-  # Shared-PMA + e_layers=1 + output-space residual-gated fusion
-  # Add horizon-wise bias gate with linear init schedule.
-  - id_template: "SUP-{dataset}.M0RGOUTHGBL.sharedpma.el1.k321.e20.vt.pr{pred_len}.sd{seed}"
+  # Low-rank scorer sweep: keep hidden fixed, vary rank.
+  - id_template: "SUP-{dataset}.M0RGOUTHGBL.sharedpma.el1.k321.e20.vt.sf-lr{rank}.h{hidden}.pr{pred_len}.sd{seed}"
     entry: downstream
     overrides:
       - data={dataset}
@@ -17,6 +16,9 @@ runs:
       - model.multislot.slot_attn.enabled=true
       - model.multislot.slot_attn.mode=post
       - model.multislot.slot_fuse.mode=residual_gated_output
+      - model.multislot.slot_fuse.hidden={hidden}
+      - model.multislot.slot_fuse.score_mode=lowrank
+      - model.multislot.slot_fuse.score_rank={rank}
       - model.multislot.slot_fuse.horizon_gate.enabled=true
       - model.multislot.slot_fuse.horizon_gate.mode=bias
       - model.multislot.slot_fuse.horizon_gate.init_schedule=linear
@@ -27,8 +29,7 @@ runs:
       - train=downstream
       - train.mode=ft
       - train.freeze_epochs=0
-      - train.epochs=20
-      - train.stop_epoch=10
+      - train.epochs=10
       - train.batch_size=128
       - train.patience=0
       - train.ssl_ckpt_path=null
@@ -47,11 +48,13 @@ runs:
       - runtime.seed={seed}
       - runtime.deterministic=true
       - run.code=SUP-{dataset}
-      - run.hparams_tag=m0-rgout+hgatebias+linear+sharedpma+pkv+post-sa-k321-e20-valtest-el1-pr{pred_len}
+      - run.hparams_tag=m0-rgout+hgatebias+linear+sharedpma+pkv+post-sa-k321-e20-valtest-el1-sf-lr{rank}-h{hidden}-pr{pred_len}
       - run.id={id}
     sweep:
-      dataset: [Weather, ETTh1, ETTh2, ETTm1, ETTm2, Exchange, AirQuality, AppliancesEnergy]
+      dataset: [ETTh1, ETTh2]
       pred_len: [96,192,336,720]
+      hidden: [2048]
+      rank: [128,192,256,384]
       seed: [0]
 
 ops: []

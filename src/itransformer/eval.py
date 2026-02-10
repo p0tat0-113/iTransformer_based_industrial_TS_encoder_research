@@ -12,6 +12,8 @@ from itransformer.analysis.utils import load_run_checkpoint, load_state
 from itransformer.data import data_provider
 from itransformer.evals.utils import (
     apply_bias_scale,
+    apply_time_half_swap,
+    apply_time_shuffle_full,
     apply_missing_values,
     apply_noise,
     apply_downsample,
@@ -71,19 +73,51 @@ def _set_seed(cfg) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def _load_cfg_from_yaml(path: str) -> dict | None:
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        loaded = OmegaConf.load(path)
+        data = OmegaConf.to_container(loaded, resolve=True)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _infer_ckpt_cfg(cfg, ckpt_path: str, ckpt_payload: dict | None) -> dict | None:
+    if isinstance(ckpt_payload, dict) and isinstance(ckpt_payload.get("cfg"), dict):
+        return ckpt_payload.get("cfg")
+
+    if getattr(cfg.eval, "on_run_id", ""):
+        run_cfg = os.path.join(cfg.paths.runs_dir, cfg.eval.on_run_id, "config.yaml")
+        loaded = _load_cfg_from_yaml(run_cfg)
+        if isinstance(loaded, dict):
+            return loaded
+
+    ckpt_dir_cfg = os.path.join(os.path.dirname(ckpt_path), "config.yaml")
+    loaded = _load_cfg_from_yaml(ckpt_dir_cfg)
+    if isinstance(loaded, dict):
+        return loaded
+    return None
+
+
 def _apply_ckpt_cfg(cfg, ckpt_cfg: dict | None) -> None:
     if not isinstance(ckpt_cfg, dict):
         return
-    model_cfg = ckpt_cfg.get("model", {})
-    patch_cfg = model_cfg.get("patch", {}) if isinstance(model_cfg, dict) else {}
-    if not hasattr(cfg, "model") or not hasattr(cfg.model, "patch"):
-        return
-    if getattr(cfg.model.patch, "patch_len", 0) in (0, None) and patch_cfg.get("patch_len"):
-        cfg.model.patch.patch_len = patch_cfg.get("patch_len")
-    if not getattr(cfg.model.patch, "mode", None) and patch_cfg.get("mode"):
-        cfg.model.patch.mode = patch_cfg.get("mode")
-    if getattr(cfg.model.patch, "local_win", None) in (0, None) and patch_cfg.get("local_win") is not None:
-        cfg.model.patch.local_win = patch_cfg.get("local_win")
+    if bool(getattr(cfg.eval, "use_ckpt_model", True)):
+        model_cfg = ckpt_cfg.get("model", {})
+        if isinstance(model_cfg, dict) and model_cfg:
+            cfg.model = OmegaConf.create(model_cfg)
+
+    if bool(getattr(cfg.eval, "use_ckpt_data", True)):
+        data_cfg = ckpt_cfg.get("data", {})
+        if isinstance(data_cfg, dict) and data_cfg:
+            cfg.data = OmegaConf.create(data_cfg)
+
+    if bool(getattr(cfg.eval, "use_ckpt_metadata", True)):
+        meta_cfg = ckpt_cfg.get("metadata", {})
+        if isinstance(meta_cfg, dict) and meta_cfg:
+            cfg.metadata = OmegaConf.create(meta_cfg)
 
 
 def _require_patch_len(cfg) -> None:
@@ -95,13 +129,27 @@ def _require_patch_len(cfg) -> None:
             raise ValueError("eval requires model.patch.patch_len for patch models.")
 
 
-def _run_eval(op_code, model, test_loader, device, meta_emb, pred_len, *, level=None, downsample=None, missing_rate=None):
+def _run_eval(
+    op_code,
+    model,
+    test_loader,
+    device,
+    meta_emb,
+    pred_len,
+    *,
+    level=None,
+    downsample=None,
+    missing_rate=None,
+    shuffle_seed=None,
+    shuffle_per_sample=True,
+    shuffle_apply_to="x_and_mark",
+):
     preds_all = []
     trues_all = []
     channel_mask = None
 
     with torch.no_grad():
-        for batch in test_loader:
+        for batch_idx, batch in enumerate(test_loader):
             batch_x, batch_y, batch_x_mark, _ = batch
             x_enc = torch.as_tensor(batch_x, dtype=torch.float32, device=device)
             x_mark = None
@@ -121,6 +169,17 @@ def _run_eval(op_code, model, test_loader, device, meta_emb, pred_len, *, level=
                     _, _, n_vars = x_enc.shape
                     channel_mask = torch.rand(n_vars, device=device) < missing_rate
                 x_enc = x_enc.masked_fill(channel_mask.view(1, 1, -1), 0.0)
+            elif op_code == "X1":
+                batch_seed = None if shuffle_seed is None else int(shuffle_seed) + int(batch_idx)
+                x_enc, x_mark = apply_time_shuffle_full(
+                    x_enc,
+                    x_mark,
+                    seed=batch_seed,
+                    per_sample=bool(shuffle_per_sample),
+                    apply_to=shuffle_apply_to,
+                )
+            elif op_code == "X2":
+                x_enc, x_mark = apply_time_half_swap(x_enc, x_mark, apply_to=shuffle_apply_to)
             elif op_code in ("T1", "T2", "T3"):
                 pass
             else:
@@ -148,14 +207,17 @@ def main(cfg) -> None:
         ckpt_payload = torch.load(ckpt_path, map_location="cpu")
     except Exception:
         ckpt_payload = None
-    if isinstance(ckpt_payload, dict):
-        _apply_ckpt_cfg(cfg, ckpt_payload.get("cfg"))
+    ckpt_cfg = _infer_ckpt_cfg(cfg, ckpt_path, ckpt_payload if isinstance(ckpt_payload, dict) else None)
+    _apply_ckpt_cfg(cfg, ckpt_cfg)
     _require_patch_len(cfg)
     device = torch.device("cuda" if cfg.runtime.device == "cuda" and torch.cuda.is_available() else "cpu")
     if getattr(cfg.runtime, "deterministic", False):
         _set_seed(cfg)
 
-    test_data, test_loader = data_provider(cfg, flag="test")
+    split = str(getattr(cfg.eval, "split", "test") or "test").lower().strip()
+    if split != "test":
+        raise ValueError(f"eval.split={split} is not supported; only 'test' is allowed.")
+    test_data, test_loader = data_provider(cfg, flag=split)
     meta_emb = _maybe_meta(cfg, test_data, device)
     meta_emb_eval = meta_emb
 
@@ -169,6 +231,15 @@ def main(cfg) -> None:
     level = parse_level(cfg.eval.op_hparams_tag or "")
     missing_rate = parse_level(cfg.eval.op_hparams_tag or "", default=0.1)
     missing_rates = list(getattr(cfg.eval, "missing_rates", []) or [])
+    shuffle_seed = getattr(cfg.eval, "shuffle_seed", None)
+    if shuffle_seed is not None:
+        shuffle_seed = int(shuffle_seed)
+    shuffle_per_sample = bool(getattr(cfg.eval, "shuffle_per_sample", True))
+    shuffle_apply_to = str(getattr(cfg.eval, "shuffle_apply_to", "x_and_mark") or "x_and_mark")
+    if shuffle_apply_to not in ("x_and_mark", "x_only"):
+        raise ValueError(
+            f"Unsupported eval.shuffle_apply_to: {shuffle_apply_to} (expected 'x_and_mark' or 'x_only')"
+        )
 
     if op_code in ("S1", "S2", "S3"):
         if op_code == "S2":
@@ -178,6 +249,24 @@ def main(cfg) -> None:
         else:
             results["op_params"] = {"level": level}
             metrics = _run_eval(op_code, model, test_loader, device, meta_emb_eval, cfg.data.pred_len, level=level)
+        results.update(metrics)
+    elif op_code in ("X1", "X2"):
+        results["op_params"] = {
+            "shuffle_seed": shuffle_seed,
+            "shuffle_per_sample": shuffle_per_sample,
+            "shuffle_apply_to": shuffle_apply_to,
+        }
+        metrics = _run_eval(
+            op_code,
+            model,
+            test_loader,
+            device,
+            meta_emb_eval,
+            cfg.data.pred_len,
+            shuffle_seed=shuffle_seed,
+            shuffle_per_sample=shuffle_per_sample,
+            shuffle_apply_to=shuffle_apply_to,
+        )
         results.update(metrics)
     elif op_code == "T1":
         if meta_emb is None:
@@ -240,6 +329,7 @@ def main(cfg) -> None:
         "op_hparams_tag": getattr(cfg.eval, "op_hparams_tag", ""),
         "run_id": run_id,
         "run_code": run_code,
+        "split": split,
         "dataset": cfg.data.name,
         "model_variant": cfg.model.variant,
     }

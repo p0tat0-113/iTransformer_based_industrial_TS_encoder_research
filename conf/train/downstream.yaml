@@ -2,6 +2,7 @@ mode: sl   # sl | ft | lp
 epochs: 10
 batch_size: 32
 patience: 3
+stop_epoch: 0   # 0 disables hard-stop; otherwise stop training loop at this epoch
 num_workers: 4
 use_amp: false
 gradient_clip: 0.0

@@ -1,9 +1,11 @@
-plan_id: M0_quick_combo_rgpv_sa_outfuse_sharedpma_hgatebias_linear_k321_e20_vt_el1_predlen
+plan_id: M0_quick_combo_rgpv_sa_outfuse_halpha_hgatebias_sharedpma_k321_e5_vt_el1_pr720
 
 runs:
-  # Shared-PMA + e_layers=1 + output-space residual-gated fusion
-  # Add horizon-wise bias gate with linear init schedule.
-  - id_template: "SUP-{dataset}.M0RGOUTHGBL.sharedpma.el1.k321.e20.vt.pr{pred_len}.sd{seed}"
+  # Output-space residual-gated fusion with both:
+  # - horizon-wise alpha (output-based scores)
+  # - horizon-wise bias gate (init_end=-8 for conservative long horizon)
+  # plus shared PMA and single encoder layer.
+  - id_template: "SUP-{dataset}.M0RGOUTHAHG.sharedpma.el1.k321.e5.vt.pr{pred_len}.sd{seed}"
     entry: downstream
     overrides:
       - data={dataset}
@@ -17,9 +19,10 @@ runs:
       - model.multislot.slot_attn.enabled=true
       - model.multislot.slot_attn.mode=post
       - model.multislot.slot_fuse.mode=residual_gated_output
+      - model.multislot.slot_fuse.horizon_alpha.enabled=true
+      - model.multislot.slot_fuse.horizon_alpha.hidden=16
       - model.multislot.slot_fuse.horizon_gate.enabled=true
       - model.multislot.slot_fuse.horizon_gate.mode=bias
-      - model.multislot.slot_fuse.horizon_gate.init_schedule=linear
       - model.multislot.slot_fuse.horizon_gate.init_start=-2.0
       - model.multislot.slot_fuse.horizon_gate.init_end=-8.0
       - model.d_model=512
@@ -27,31 +30,25 @@ runs:
       - train=downstream
       - train.mode=ft
       - train.freeze_epochs=0
-      - train.epochs=20
-      - train.stop_epoch=10
+      - train.epochs=10
       - train.batch_size=128
       - train.patience=0
       - train.ssl_ckpt_path=null
       - train.val_flag=test
-      - optim.name=adam
-      - optim.scheduler=onecycle
-      - optim.onecycle_max_lr=0.0003
-      - optim.onecycle_pct_start=0.3
-      - optim.onecycle_anneal_strategy=cos
-      - optim.onecycle_div_factor=25
-      - optim.onecycle_final_div_factor=1000
-      - optim.onecycle_three_phase=false
-      - optim.onecycle_total_steps=0
+      - optim.lr=0.0001
+      - optim.scheduler=cosine
+      - optim.min_lr=0.000001
+      - optim.t_max=5
       - metadata.enabled=false
       - runtime.device=cuda
       - runtime.seed={seed}
       - runtime.deterministic=true
       - run.code=SUP-{dataset}
-      - run.hparams_tag=m0-rgout+hgatebias+linear+sharedpma+pkv+post-sa-k321-e20-valtest-el1-pr{pred_len}
+      - run.hparams_tag=m0-rgout+halpha_out+hgatebias_ie-8+sharedpma+pkv+post-sa-k321-e5-valtest-el1-pr{pred_len}
       - run.id={id}
     sweep:
-      dataset: [Weather, ETTh1, ETTh2, ETTm1, ETTm2, Exchange, AirQuality, AppliancesEnergy]
-      pred_len: [96,192,336,720]
+      dataset: [ETTh1]
+      pred_len: [336,720]
       seed: [0]
 
 ops: []
