@@ -1,0 +1,43 @@
+variant: TSLIB
+d_model: 512
+n_heads: 8
+e_layers: 2
+d_ff: 2048
+dropout: 0.1
+activation: gelu
+use_norm: true
+meta:
+  enabled: false
+  mode: none
+  source: none
+  proj: linear
+  mlp_hidden: 512
+patch:
+  enabled: false
+  patch_len: 0
+  mode: none
+  local_win: 0
+  use_pos_emb: false
+
+tslib:
+  repo_root: ./external/Time-Series-Library
+  model_name: iTransformer
+  task_name: long_term_forecast
+
+  # Common TSLib defaults.
+  d_layers: 1
+  factor: 1
+  embed: timeF
+  moving_avg: 25
+  top_k: 5
+  num_kernels: 6
+  channel_independence: 1
+  decomp_method: moving_avg
+  down_sampling_layers: 1
+  down_sampling_window: 1
+  down_sampling_method: avg
+
+  # Model-specific defaults used by adapter where needed.
+  patch_len: 16
+  stride: 8
+  individual: false

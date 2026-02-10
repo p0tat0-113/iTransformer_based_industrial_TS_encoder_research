@@ -260,20 +260,33 @@ def main(cfg) -> None:
     if train_mode in ("ft", "lp"):
         load_info = _load_ssl_checkpoint(model, cfg.train.ssl_ckpt_path)
 
-    # Freeze rules
-    if hasattr(model, "enc_embedding"):
-        freeze_modules = [model.enc_embedding, model.encoder]
+    # Freeze rules (LP/FT): handle heterogeneous model frontends safely.
+    freeze_modules = []
+    encoder = getattr(model, "encoder", None)
+    if hasattr(model, "enc_embedding") and encoder is not None:
+        freeze_modules = [model.enc_embedding, encoder]
     else:
-        # patch model
         patch_embed = getattr(model, "patch_embed", None)
-        if patch_embed is not None:
+        value_proj = getattr(model, "value_proj", None)
+        if patch_embed is not None and encoder is not None:
             if load_info is not None and not load_info.get("patch_embed_loaded", True):
                 print("[downstream] patch_embed not loaded; keeping it trainable in LP/FT.")
-                freeze_modules = [model.encoder]
+                freeze_modules = [encoder]
             else:
-                freeze_modules = [patch_embed, model.encoder]
+                freeze_modules = [patch_embed, encoder]
+        elif value_proj is not None and encoder is not None:
+            freeze_modules = [value_proj, encoder]
+        elif encoder is not None:
+            print(
+                "[downstream] freeze fallback: no known input projection module "
+                "detected; freezing encoder only in LP/FT."
+            )
+            freeze_modules = [encoder]
         else:
-            freeze_modules = [model.value_proj, model.encoder]
+            print(
+                "[downstream] freeze fallback: no compatible freeze target modules "
+                "detected; LP/FT will not freeze modules for this model."
+            )
 
     base_lr = float(cfg.optim.lr)
     optim_name = str(getattr(cfg.optim, "name", "adam") or "adam").lower()
@@ -464,12 +477,22 @@ def main(cfg) -> None:
         print(f"[downstream] diversity loss enabled: lambda={div_lambda:g}")
 
     patience = int(getattr(cfg.train, "patience", 0) or 0)
+    stop_epoch = int(getattr(cfg.train, "stop_epoch", 0) or 0)
+    if stop_epoch < 0:
+        raise ValueError(f"train.stop_epoch must be >= 0 (got {stop_epoch})")
+    if stop_epoch > int(cfg.train.epochs):
+        print(
+            f"[downstream] train.stop_epoch={stop_epoch} > train.epochs={int(cfg.train.epochs)}; "
+            "ignoring stop_epoch."
+        )
+        stop_epoch = 0
     best_val = float("inf")
     best_epoch = 0
     best_train = {"loss": None, "mse": None, "mae": None}
     best_val_metrics = {"loss": None}
     wait = 0
     early_stopped = False
+    stopped_by_limit = False
     stopped_epoch = None
 
     train_loss_curve = []
@@ -584,6 +607,12 @@ def main(cfg) -> None:
                 stopped_epoch = epoch + 1
                 break
 
+        if stop_epoch > 0 and (epoch + 1) >= stop_epoch:
+            stopped_by_limit = True
+            stopped_epoch = epoch + 1
+            print(f"[downstream] stop_epoch reached at epoch={stopped_epoch}; stopping training loop.")
+            break
+
     wall_time = time.perf_counter() - wall_start
 
     best_ckpt_path = os.path.join(run_dir, "downstream_checkpoint.pt")
@@ -599,7 +628,9 @@ def main(cfg) -> None:
             "best_train": best_train,
             "best_val": best_val_metrics,
             "early_stopped": early_stopped,
+            "stopped_by_limit": stopped_by_limit,
             "patience": patience,
+            "stop_epoch": stop_epoch,
             "stopped_epoch": stopped_epoch,
         },
         "curves": {

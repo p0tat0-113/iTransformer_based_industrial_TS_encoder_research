@@ -1,0 +1,39 @@
+plan_id: TSLIB_baseline_compare_smoke
+
+runs:
+  - id_template: "SMK-{dataset}.TSLIB.{model_name}.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - model=TSLIB
+      - model.tslib.model_name={model_name}
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=1
+      - train.stop_epoch=1
+      - train.batch_size=512
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=val
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=none
+      - metadata.enabled=false
+      - runtime.device=cpu
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - run.code=SMK-{dataset}
+      - run.hparams_tag=tslib-{model_name}-smoke-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [AppliancesEnergy]
+      model_name: [DLinear, iTransformer]
+      pred_len: [96]
+      seed: [0]
+
+ops: []
+cmps: []
+aggs: []
