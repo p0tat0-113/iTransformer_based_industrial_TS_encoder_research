@@ -135,6 +135,7 @@ dmypy.json
 /dataset/traffic/traffic.csv
 /dataset/electricity/electricity.csv
 /dataset/PEMS/*.npz
+/dataset/Solar/solar_AL.txt
 
 # experiments results
 /artifacts
