@@ -1,0 +1,21 @@
+{"sensor_id": "p (mbar)", "text": "sensor:p (mbar)"}
+{"sensor_id": "T (degC)", "text": "sensor:T (degC)"}
+{"sensor_id": "Tpot (K)", "text": "sensor:Tpot (K)"}
+{"sensor_id": "Tdew (degC)", "text": "sensor:Tdew (degC)"}
+{"sensor_id": "rh (%)", "text": "sensor:rh (%)"}
+{"sensor_id": "VPmax (mbar)", "text": "sensor:VPmax (mbar)"}
+{"sensor_id": "VPact (mbar)", "text": "sensor:VPact (mbar)"}
+{"sensor_id": "VPdef (mbar)", "text": "sensor:VPdef (mbar)"}
+{"sensor_id": "sh (g/kg)", "text": "sensor:sh (g/kg)"}
+{"sensor_id": "H2OC (mmol/mol)", "text": "sensor:H2OC (mmol/mol)"}
+{"sensor_id": "rho (g/m**3)", "text": "sensor:rho (g/m**3)"}
+{"sensor_id": "wv (m/s)", "text": "sensor:wv (m/s)"}
+{"sensor_id": "max. wv (m/s)", "text": "sensor:max. wv (m/s)"}
+{"sensor_id": "wd (deg)", "text": "sensor:wd (deg)"}
+{"sensor_id": "rain (mm)", "text": "sensor:rain (mm)"}
+{"sensor_id": "raining (s)", "text": "sensor:raining (s)"}
+{"sensor_id": "SWDR (W/m�)", "text": "sensor:SWDR (W/m�)"}
+{"sensor_id": "PAR (�mol/m�/s)", "text": "sensor:PAR (�mol/m�/s)"}
+{"sensor_id": "max. PAR (�mol/m�/s)", "text": "sensor:max. PAR (�mol/m�/s)"}
+{"sensor_id": "Tlog (degC)", "text": "sensor:Tlog (degC)"}
+{"sensor_id": "OT", "text": "sensor:OT"}
