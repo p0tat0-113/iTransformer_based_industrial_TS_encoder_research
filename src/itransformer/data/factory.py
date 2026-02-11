@@ -9,6 +9,7 @@ from itransformer.data.datasets import (
     DatasetPred,
 )
 from itransformer.data.mix import mix_data_provider
+from itransformer.data.tslib_timeenc import resolve_tslib_timeenc
 
 
 def _select_dataset(name: str, data_path: str):
@@ -54,6 +55,12 @@ def data_provider(cfg, flag: str):
         batch_size = cfg.train.batch_size
         freq = cfg.data.freq
 
+    timeenc = resolve_tslib_timeenc(
+        cfg,
+        cfg.data.timeenc,
+        source=f"data_provider(flag={flag}, data={cfg.data.name})",
+    )
+
     data_set = data_cls(
         root_path=cfg.data.root_path,
         data_path=cfg.data.data_path,
@@ -61,7 +68,7 @@ def data_provider(cfg, flag: str):
         size=[cfg.data.seq_len, cfg.data.label_len, cfg.data.pred_len],
         features=cfg.data.features,
         target=cfg.data.target,
-        timeenc=cfg.data.timeenc,
+        timeenc=timeenc,
         freq=freq,
     )
 

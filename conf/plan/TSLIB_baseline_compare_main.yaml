@@ -1,13 +1,33 @@
 plan_id: TSLIB_baseline_compare_main
 
+# 설계 메모:
+# 1) 모델별/데이터셋별 override를 완전히 분리해, 어느 값이 어디에 적용되는지 즉시 추적 가능하게 한다.
+# 2) TSLIB의 embed=timeF 정합성을 위해 모든 블록에서 data.timeenc=1을 명시한다.
+# 3) 범위는 ETTh1, ETTh2, ETTm1, ETTm2, Exchange, AirQuality / pred_len=96 / seed=0.
+# 4) 공식 TSLib long_term_forecast 스크립트가 없는 조합은 주석으로 fallback 근거를 남긴다.
+
 runs:
-  - id_template: "SUP-{dataset}.TSLIB.{model_name}.e20.vt.pr{pred_len}.sd{seed}"
+  # ---------------------------------------------------------------------------
+  # iTransformer (데이터셋별 명시)
+  # ---------------------------------------------------------------------------
+  # ETTh1: TSLib long_term_forecast에는 직접 스크립트가 없어서, legacy ETT 스크립트(ETTh1) 값을 사용.
+  - id_template: "SUP-{dataset}.TSLIB.iTransformer.e20.vt.pr{pred_len}.sd{seed}"
     entry: downstream
     overrides:
       - data={dataset}
       - data.pred_len={pred_len}
+      - data.timeenc=1
+
       - model=TSLIB
-      - model.tslib.model_name={model_name}
+      - model.tslib.model_name=iTransformer
+      - model.d_model=256
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=256
+      - model.dropout=0.1
+      - model.tslib.d_layers=1
+      - model.tslib.factor=3
+
       - train=downstream
       - train.mode=ft
       - train.freeze_epochs=0
@@ -18,22 +38,1445 @@ runs:
       - train.num_workers=0
       - train.ssl_ckpt_path=null
       - train.val_flag=test
+
       - optim.name=adam
       - optim.lr=0.0001
       - optim.scheduler=steplr
       - optim.step_size=1
       - optim.gamma=0.5
+
       - metadata.enabled=false
       - runtime.device=cuda
       - runtime.seed={seed}
       - runtime.deterministic=true
+
       - run.code=SUP-{dataset}
-      - run.hparams_tag=tslib-{model_name}-e20-vt-pr{pred_len}
+      - run.hparams_tag=tslib-iTransformer-ETTh1-explicit-pr{pred_len}
       - run.id={id}
     sweep:
       dataset: [ETTh1]
-      model_name: [iTransformer]
-      pred_len: [96,192,336,720]
+      pred_len: [96]
+      seed: [0]
+
+  # ETTh2: TSLib long_term_forecast 공식 스크립트(ETT_script/iTransformer_ETTh2.sh) 값 사용.
+  - id_template: "SUP-{dataset}.TSLIB.iTransformer.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=iTransformer
+      - model.d_model=128
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=128
+      - model.dropout=0.1
+      - model.tslib.d_layers=1
+      - model.tslib.factor=3
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-iTransformer-ETTh2-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh2]
+      pred_len: [96]
+      seed: [0]
+
+  # ETTm1: TSLib long_term_forecast에는 직접 스크립트가 없어 legacy ETT 스크립트(ETTm1) 값 사용.
+  - id_template: "SUP-{dataset}.TSLIB.iTransformer.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=iTransformer
+      - model.d_model=128
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=128
+      - model.dropout=0.1
+      - model.tslib.d_layers=1
+      - model.tslib.factor=3
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-iTransformer-ETTm1-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTm1]
+      pred_len: [96]
+      seed: [0]
+
+  # ETTm2: TSLib long_term_forecast에는 직접 스크립트가 없어 legacy ETT 스크립트(ETTm2) 값 사용.
+  - id_template: "SUP-{dataset}.TSLIB.iTransformer.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=iTransformer
+      - model.d_model=128
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=128
+      - model.dropout=0.1
+      - model.tslib.d_layers=1
+      - model.tslib.factor=3
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-iTransformer-ETTm2-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTm2]
+      pred_len: [96]
+      seed: [0]
+
+  # Exchange: TSLib long_term_forecast에는 직접 스크립트가 없어 legacy Exchange 스크립트 값 사용.
+  - id_template: "SUP-{dataset}.TSLIB.iTransformer.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=iTransformer
+      - model.d_model=128
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=128
+      - model.dropout=0.1
+      - model.tslib.d_layers=1
+      - model.tslib.factor=3
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-iTransformer-Exchange-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [Exchange]
+      pred_len: [96]
+      seed: [0]
+
+  # AirQuality: 공식/legacy 스크립트 부재, Exchange 근사 레시피를 fallback으로 명시 적용.
+  - id_template: "SUP-{dataset}.TSLIB.iTransformer.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=iTransformer
+      - model.d_model=128
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=128
+      - model.dropout=0.1
+      - model.tslib.d_layers=1
+      - model.tslib.factor=3
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-iTransformer-AirQuality-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [AirQuality]
+      pred_len: [96]
+      seed: [0]
+
+  # ---------------------------------------------------------------------------
+  # DLinear (기존 유지)
+  # ---------------------------------------------------------------------------
+  - id_template: "SUP-{dataset}.TSLIB.DLinear.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=DLinear
+      - model.tslib.factor=3
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-DLinear-p2-e20-vt-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1, ETTh2, ETTm1, ETTm2, Exchange, AirQuality]
+      pred_len: [96]
+      seed: [0]
+
+  # ---------------------------------------------------------------------------
+  # TiDE (데이터셋별 명시)
+  # ---------------------------------------------------------------------------
+  # TiDE는 TSLib long_term_forecast에서 ETTh1 공식 스크립트만 제공됨.
+  # 따라서 ETTh1은 공식값을 그대로 명시하고, 나머지는 같은 구조값을 fallback으로 명시한다.
+  - id_template: "SUP-{dataset}.TSLIB.TiDE.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=TiDE
+      - model.d_model=256
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=256
+      - model.dropout=0.3
+      - model.tslib.d_layers=2
+      - model.tslib.factor=3
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-TiDE-ETTh1-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.TiDE.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=TiDE
+      - model.d_model=256
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=256
+      - model.dropout=0.3
+      - model.tslib.d_layers=2
+      - model.tslib.factor=3
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-TiDE-ETTh2-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh2]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.TiDE.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=TiDE
+      - model.d_model=256
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=256
+      - model.dropout=0.3
+      - model.tslib.d_layers=2
+      - model.tslib.factor=3
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-TiDE-ETTm1-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTm1]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.TiDE.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=TiDE
+      - model.d_model=256
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=256
+      - model.dropout=0.3
+      - model.tslib.d_layers=2
+      - model.tslib.factor=3
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-TiDE-ETTm2-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTm2]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.TiDE.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=TiDE
+      - model.d_model=256
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=256
+      - model.dropout=0.3
+      - model.tslib.d_layers=2
+      - model.tslib.factor=3
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-TiDE-Exchange-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [Exchange]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.TiDE.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=TiDE
+      - model.d_model=256
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=256
+      - model.dropout=0.3
+      - model.tslib.d_layers=2
+      - model.tslib.factor=3
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-TiDE-AirQuality-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [AirQuality]
+      pred_len: [96]
+      seed: [0]
+
+  # ---------------------------------------------------------------------------
+  # FEDformer (데이터셋별 명시)
+  # ---------------------------------------------------------------------------
+  # TSLib long_term_forecast 공식 스크립트(ETTh1/ECL) 기준 핵심값은 e_layers=2,d_layers=1,factor=3.
+  # 본 벤치마크 6개 데이터셋에는 이를 데이터셋별로 명시 적용한다.
+  - id_template: "SUP-{dataset}.TSLIB.FEDformer.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=FEDformer
+      - model.d_model=512
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=2048
+      - model.dropout=0.1
+      - model.tslib.d_layers=1
+      - model.tslib.factor=3
+      - model.tslib.moving_avg=25
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-FEDformer-ETTh1-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.FEDformer.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=FEDformer
+      - model.d_model=512
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=2048
+      - model.dropout=0.1
+      - model.tslib.d_layers=1
+      - model.tslib.factor=3
+      - model.tslib.moving_avg=25
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-FEDformer-ETTh2-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh2]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.FEDformer.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=FEDformer
+      - model.d_model=512
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=2048
+      - model.dropout=0.1
+      - model.tslib.d_layers=1
+      - model.tslib.factor=3
+      - model.tslib.moving_avg=25
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-FEDformer-ETTm1-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTm1]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.FEDformer.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=FEDformer
+      - model.d_model=512
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=2048
+      - model.dropout=0.1
+      - model.tslib.d_layers=1
+      - model.tslib.factor=3
+      - model.tslib.moving_avg=25
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-FEDformer-ETTm2-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTm2]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.FEDformer.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=FEDformer
+      - model.d_model=512
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=2048
+      - model.dropout=0.1
+      - model.tslib.d_layers=1
+      - model.tslib.factor=3
+      - model.tslib.moving_avg=25
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-FEDformer-Exchange-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [Exchange]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.FEDformer.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=FEDformer
+      - model.d_model=512
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=2048
+      - model.dropout=0.1
+      - model.tslib.d_layers=1
+      - model.tslib.factor=3
+      - model.tslib.moving_avg=25
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-FEDformer-AirQuality-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [AirQuality]
+      pred_len: [96]
+      seed: [0]
+
+  # ---------------------------------------------------------------------------
+  # Autoformer (데이터셋별 명시)
+  # ---------------------------------------------------------------------------
+  # TSLib long_term_forecast 공식값:
+  # - ETTh1/ETTh2/ETTm1/Exchange: factor=3
+  # - ETTm2: factor=1
+  # AirQuality는 공식 스크립트 부재로 Exchange 근사(factor=3) fallback.
+  - id_template: "SUP-{dataset}.TSLIB.Autoformer.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=Autoformer
+      - model.d_model=512
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=2048
+      - model.dropout=0.1
+      - model.tslib.d_layers=1
+      - model.tslib.factor=3
+      - model.tslib.moving_avg=25
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-Autoformer-ETTh1-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.Autoformer.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=Autoformer
+      - model.d_model=512
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=2048
+      - model.dropout=0.1
+      - model.tslib.d_layers=1
+      - model.tslib.factor=3
+      - model.tslib.moving_avg=25
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-Autoformer-ETTh2-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh2]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.Autoformer.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=Autoformer
+      - model.d_model=512
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=2048
+      - model.dropout=0.1
+      - model.tslib.d_layers=1
+      - model.tslib.factor=3
+      - model.tslib.moving_avg=25
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-Autoformer-ETTm1-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTm1]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.Autoformer.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=Autoformer
+      - model.d_model=512
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=2048
+      - model.dropout=0.1
+      - model.tslib.d_layers=1
+      - model.tslib.factor=1
+      - model.tslib.moving_avg=25
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-Autoformer-ETTm2-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTm2]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.Autoformer.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=Autoformer
+      - model.d_model=512
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=2048
+      - model.dropout=0.1
+      - model.tslib.d_layers=1
+      - model.tslib.factor=3
+      - model.tslib.moving_avg=25
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-Autoformer-Exchange-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [Exchange]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.Autoformer.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=Autoformer
+      - model.d_model=512
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_ff=2048
+      - model.dropout=0.1
+      - model.tslib.d_layers=1
+      - model.tslib.factor=3
+      - model.tslib.moving_avg=25
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-Autoformer-AirQuality-explicit-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [AirQuality]
+      pred_len: [96]
+      seed: [0]
+
+  # ---------------------------------------------------------------------------
+  # PatchTST (데이터셋별 명시, 기존 유지)
+  # ---------------------------------------------------------------------------
+  # pred_len=96 기준 TSLib 스크립트의 데이터셋별 구조값 유지.
+  - id_template: "SUP-{dataset}.TSLIB.PatchTST.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=PatchTST
+      - model.e_layers=1
+      - model.n_heads=2
+      - model.tslib.factor=3
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=32
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-PatchTST-p2-ETTh1-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.PatchTST.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=PatchTST
+      - model.e_layers=3
+      - model.n_heads=4
+      - model.tslib.factor=3
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=32
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-PatchTST-p2-ETTh2-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh2]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.PatchTST.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=PatchTST
+      - model.e_layers=1
+      - model.n_heads=2
+      - model.tslib.factor=3
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=32
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-PatchTST-p2-ETTm1-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTm1]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.PatchTST.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=PatchTST
+      - model.e_layers=3
+      - model.n_heads=16
+      - model.tslib.factor=3
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=32
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-PatchTST-p2-ETTm2-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTm2]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.PatchTST.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=PatchTST
+      - model.e_layers=2
+      - model.n_heads=8
+      - model.tslib.factor=3
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=32
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-PatchTST-p2-Exchange-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [Exchange]
+      pred_len: [96]
+      seed: [0]
+
+  - id_template: "SUP-{dataset}.TSLIB.PatchTST.e20.vt.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - data.timeenc=1
+
+      - model=TSLIB
+      - model.tslib.model_name=PatchTST
+      - model.e_layers=2
+      - model.n_heads=8
+      - model.tslib.factor=3
+
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=10
+      - train.stop_epoch=10
+      - train.batch_size=32
+      - train.patience=0
+      - train.num_workers=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=tslib-PatchTST-p2-AirQuality-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [AirQuality]
+      pred_len: [96]
       seed: [0]
 
 ops: []

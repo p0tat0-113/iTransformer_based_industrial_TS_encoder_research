@@ -23,6 +23,7 @@ tslib:
   repo_root: ./external/Time-Series-Library
   model_name: iTransformer
   task_name: long_term_forecast
+  timeenc_policy: strict
 
   # Common TSLib defaults.
   d_layers: 1

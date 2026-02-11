@@ -1,9 +1,9 @@
-plan_id: M0_quick_combo_rgpv_sa_outfuse_sharedpma_hgatebias_linear_k321_e20_vt_el1_predlen
+plan_id: M0_quick_combo_rgpv_sa_outfuse_sharedpma_hgatebias_linear_k321_e10_vt_el1_predlen
 
 runs:
   # Shared-PMA + e_layers=1 + output-space residual-gated fusion
   # Add horizon-wise bias gate with linear init schedule.
-  - id_template: "SUP-{dataset}.M0RGOUTHGBL.sharedpma.el1.k321.e20.vt.pr{pred_len}.sd{seed}"
+  - id_template: "SUP-{dataset}.M0RGOUTHGBL.sharedpma.el1.k321.e10.vt.pr{pred_len}.sd{seed}"
     entry: downstream
     overrides:
       - data={dataset}
@@ -47,12 +47,12 @@ runs:
       - runtime.seed={seed}
       - runtime.deterministic=true
       - run.code=SUP-{dataset}
-      - run.hparams_tag=m0-rgout+hgatebias+linear+sharedpma+pkv+post-sa-k321-e20-valtest-el1-pr{pred_len}
+      - run.hparams_tag=m0-rgout+hgatebias+linear+sharedpma+pkv+post-sa-k321-e10-valtest-el1-pr{pred_len}
       - run.id={id}
     sweep:
-      dataset: [Weather, ETTh1, ETTh2, ETTm1, ETTm2, Exchange, AirQuality, AppliancesEnergy]
+      dataset: [Weather, ETTh1, ETTh2, ETTm1, ETTm2, Exchange]
       pred_len: [96,192,336,720]
-      seed: [0]
+      seed: [0,1,2]
 
 ops: []
 cmps: []

@@ -43,7 +43,9 @@ def _maybe_meta(cfg, dataset, device):
     return meta_emb.to(device)
 
 
-def _predict(model, x_enc, x_mark, meta_emb):
+def _predict(model, x_enc, x_mark, meta_emb, y_mark=None, *, use_tslib: bool = False):
+    if use_tslib:
+        return model(x_enc, x_mark, meta_emb, y_mark_dec=y_mark)
     if meta_emb is None:
         return model(x_enc, x_mark)
     return model(x_enc, x_mark, meta_emb)
@@ -137,6 +139,7 @@ def _run_eval(
     meta_emb,
     pred_len,
     *,
+    use_tslib=False,
     level=None,
     downsample=None,
     missing_rate=None,
@@ -150,11 +153,14 @@ def _run_eval(
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(test_loader):
-            batch_x, batch_y, batch_x_mark, _ = batch
+            batch_x, batch_y, batch_x_mark, batch_y_mark = batch
             x_enc = torch.as_tensor(batch_x, dtype=torch.float32, device=device)
             x_mark = None
+            y_mark = None
             if batch_x_mark is not None:
                 x_mark = torch.as_tensor(batch_x_mark, dtype=torch.float32, device=device)
+            if batch_y_mark is not None:
+                y_mark = torch.as_tensor(batch_y_mark, dtype=torch.float32, device=device)
 
             if op_code == "S1":
                 x_enc = apply_noise(x_enc, level)
@@ -185,7 +191,7 @@ def _run_eval(
             else:
                 raise ValueError(f"Unknown eval.op_code: {op_code}")
 
-            pred = _predict(model, x_enc, x_mark, meta_emb)
+            pred = _predict(model, x_enc, x_mark, meta_emb, y_mark, use_tslib=use_tslib)
             true = torch.as_tensor(batch_y, dtype=torch.float32, device=device)
             true = true[:, -pred_len:, :]
             preds_all.append(pred)
@@ -225,6 +231,7 @@ def main(cfg) -> None:
     load_state(model, ckpt_path)
     model = model.to(device)
     model.eval()
+    use_tslib = str(getattr(cfg.model, "variant", "")) == "TSLIB"
 
     results = {}
 
@@ -245,10 +252,28 @@ def main(cfg) -> None:
         if op_code == "S2":
             factor = _parse_downsample(cfg.eval.op_hparams_tag, default=2)
             results["op_params"] = {"downsample_factor": factor}
-            metrics = _run_eval("S2", model, test_loader, device, meta_emb_eval, cfg.data.pred_len, downsample=factor)
+            metrics = _run_eval(
+                "S2",
+                model,
+                test_loader,
+                device,
+                meta_emb_eval,
+                cfg.data.pred_len,
+                use_tslib=use_tslib,
+                downsample=factor,
+            )
         else:
             results["op_params"] = {"level": level}
-            metrics = _run_eval(op_code, model, test_loader, device, meta_emb_eval, cfg.data.pred_len, level=level)
+            metrics = _run_eval(
+                op_code,
+                model,
+                test_loader,
+                device,
+                meta_emb_eval,
+                cfg.data.pred_len,
+                use_tslib=use_tslib,
+                level=level,
+            )
         results.update(metrics)
     elif op_code in ("X1", "X2"):
         results["op_params"] = {
@@ -263,6 +288,7 @@ def main(cfg) -> None:
             device,
             meta_emb_eval,
             cfg.data.pred_len,
+            use_tslib=use_tslib,
             shuffle_seed=shuffle_seed,
             shuffle_per_sample=shuffle_per_sample,
             shuffle_apply_to=shuffle_apply_to,
@@ -271,9 +297,25 @@ def main(cfg) -> None:
     elif op_code == "T1":
         if meta_emb is None:
             raise ValueError("T1 requires metadata enabled")
-        base_metrics = _run_eval("T1", model, test_loader, device, meta_emb, cfg.data.pred_len)
+        base_metrics = _run_eval(
+            "T1",
+            model,
+            test_loader,
+            device,
+            meta_emb,
+            cfg.data.pred_len,
+            use_tslib=use_tslib,
+        )
         perm = torch.randperm(meta_emb.size(0), device=meta_emb.device)
-        shuffled_metrics = _run_eval("T1", model, test_loader, device, meta_emb[perm], cfg.data.pred_len)
+        shuffled_metrics = _run_eval(
+            "T1",
+            model,
+            test_loader,
+            device,
+            meta_emb[perm],
+            cfg.data.pred_len,
+            use_tslib=use_tslib,
+        )
         results["base_metrics"] = base_metrics
         results["shuffled_metrics"] = shuffled_metrics
         results["delta"] = {
@@ -290,7 +332,15 @@ def main(cfg) -> None:
             mask = torch.rand(meta_emb.size(0), device=meta_emb.device) < rate
             meta_masked = meta_emb.clone()
             meta_masked[mask] = 0.0
-            metrics_by_rate[str(rate)] = _run_eval("T2", model, test_loader, device, meta_masked, cfg.data.pred_len)
+            metrics_by_rate[str(rate)] = _run_eval(
+                "T2",
+                model,
+                test_loader,
+                device,
+                meta_masked,
+                cfg.data.pred_len,
+                use_tslib=use_tslib,
+            )
         results["metrics_by_rate"] = metrics_by_rate
     elif op_code in ("R1", "R2"):
         if not missing_rates:
@@ -298,11 +348,28 @@ def main(cfg) -> None:
         metrics_by_rate = {}
         for rate in missing_rates:
             metrics_by_rate[str(rate)] = _run_eval(
-                op_code, model, test_loader, device, meta_emb_eval, cfg.data.pred_len, missing_rate=rate
+                op_code,
+                model,
+                test_loader,
+                device,
+                meta_emb_eval,
+                cfg.data.pred_len,
+                use_tslib=use_tslib,
+                missing_rate=rate,
             )
         results["metrics_by_rate"] = metrics_by_rate
     elif op_code == "T3":
-        results.update(_run_eval("T3", model, test_loader, device, meta_emb_eval, cfg.data.pred_len))
+        results.update(
+            _run_eval(
+                "T3",
+                model,
+                test_loader,
+                device,
+                meta_emb_eval,
+                cfg.data.pred_len,
+                use_tslib=use_tslib,
+            )
+        )
     else:
         raise ValueError(f"Unknown eval.op_code: {op_code}")
 

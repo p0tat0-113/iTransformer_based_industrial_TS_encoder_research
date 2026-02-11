@@ -16,6 +16,7 @@ from itransformer.data.datasets import (
     DatasetPEMS,
     DatasetPred,
 )
+from itransformer.data.tslib_timeenc import resolve_tslib_timeenc
 
 
 _CONF_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "conf"))
@@ -69,6 +70,12 @@ def _build_loader(cfg, data_cfg: dict, flag: str):
         batch_size = cfg.train.batch_size
         freq = data_cfg.get("freq", cfg.data.freq)
 
+    timeenc = resolve_tslib_timeenc(
+        cfg,
+        data_cfg.get("timeenc", cfg.data.timeenc),
+        source=f"mix_data_provider(flag={flag}, data={data_cfg.get('name', cfg.data.name)})",
+    )
+
     data_set = data_cls(
         root_path=data_cfg.get("root_path", cfg.data.root_path),
         data_path=data_cfg.get("data_path", cfg.data.data_path),
@@ -76,7 +83,7 @@ def _build_loader(cfg, data_cfg: dict, flag: str):
         size=[cfg.data.seq_len, cfg.data.label_len, cfg.data.pred_len],
         features=data_cfg.get("features", cfg.data.features),
         target=data_cfg.get("target", cfg.data.target),
-        timeenc=data_cfg.get("timeenc", cfg.data.timeenc),
+        timeenc=timeenc,
         freq=freq,
     )
 

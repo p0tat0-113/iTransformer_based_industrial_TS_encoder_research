@@ -177,18 +177,23 @@ def _maybe_inject_patch_len(cfg, ckpt_path: str) -> None:
         cfg.model.patch.patch_len = ckpt_patch_len
 
 
-def _evaluate(model, loader, device, pred_len, meta_emb=None):
+def _evaluate(model, loader, device, pred_len, meta_emb=None, *, use_tslib: bool = False):
     model.eval()
     preds = []
     trues = []
     with torch.no_grad():
         for batch in loader:
-            batch_x, batch_y, batch_x_mark, _ = batch
+            batch_x, batch_y, batch_x_mark, batch_y_mark = batch
             x_enc = torch.as_tensor(batch_x, dtype=torch.float32, device=device)
             x_mark = None
+            y_mark = None
             if batch_x_mark is not None:
                 x_mark = torch.as_tensor(batch_x_mark, dtype=torch.float32, device=device)
-            if meta_emb is None:
+            if batch_y_mark is not None:
+                y_mark = torch.as_tensor(batch_y_mark, dtype=torch.float32, device=device)
+            if use_tslib:
+                out = model(x_enc, x_mark, meta_emb, y_mark_dec=y_mark)
+            elif meta_emb is None:
                 out = model(x_enc, x_mark)
             else:
                 out = model(x_enc, x_mark, meta_emb)
@@ -248,6 +253,7 @@ def main(cfg) -> None:
 
     model = build_model(cfg)
     model = model.to(device)
+    use_tslib = str(getattr(cfg.model, "variant", "")) == "TSLIB"
 
     meta_emb = None
     if getattr(cfg.metadata, "enabled", False):
@@ -527,16 +533,21 @@ def main(cfg) -> None:
         epoch_div_losses = []
         for batch in train_loader:
             step_start = time.perf_counter()
-            batch_x, batch_y, batch_x_mark, _ = batch
+            batch_x, batch_y, batch_x_mark, batch_y_mark = batch
             x_enc = torch.as_tensor(batch_x, dtype=torch.float32, device=device)
             x_mark = None
+            y_mark = None
             if batch_x_mark is not None:
                 x_mark = torch.as_tensor(batch_x_mark, dtype=torch.float32, device=device)
+            if batch_y_mark is not None:
+                y_mark = torch.as_tensor(batch_y_mark, dtype=torch.float32, device=device)
             true = torch.as_tensor(batch_y, dtype=torch.float32, device=device)
             true = true[:, -cfg.data.pred_len :, :]
 
             optimizer.zero_grad()
-            if meta_emb is None:
+            if use_tslib:
+                out = model(x_enc, x_mark, meta_emb, y_mark_dec=y_mark)
+            elif meta_emb is None:
                 out = model(x_enc, x_mark)
             else:
                 out = model(x_enc, x_mark, meta_emb)
@@ -569,7 +580,14 @@ def main(cfg) -> None:
         train_mse = sum(epoch_mses) / max(1, len(epoch_mses))
         train_mae = sum(epoch_maes) / max(1, len(epoch_maes))
         train_div = sum(epoch_div_losses) / max(1, len(epoch_div_losses)) if epoch_div_losses else 0.0
-        val_metrics = _evaluate(model, val_loader, device, cfg.data.pred_len, meta_emb=meta_emb)
+        val_metrics = _evaluate(
+            model,
+            val_loader,
+            device,
+            cfg.data.pred_len,
+            meta_emb=meta_emb,
+            use_tslib=use_tslib,
+        )
         val_loss = val_metrics["mse"]
 
         train_loss_curve.append(train_loss)
@@ -621,7 +639,14 @@ def main(cfg) -> None:
         state = ckpt.get("state_dict", ckpt)
         model.load_state_dict(state, strict=False)
 
-    test_metrics = _evaluate(model, test_loader, device, cfg.data.pred_len, meta_emb=meta_emb)
+    test_metrics = _evaluate(
+        model,
+        test_loader,
+        device,
+        cfg.data.pred_len,
+        meta_emb=meta_emb,
+        use_tslib=use_tslib,
+    )
     metrics = {
         "summary": {
             "best_epoch": best_epoch,

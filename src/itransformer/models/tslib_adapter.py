@@ -126,7 +126,10 @@ class TSLibForecastAdapter(nn.Module):
             self.model = model_cls(args).float()
 
     def _build_decoder_inputs(
-        self, x_enc: torch.Tensor, x_mark_enc: torch.Tensor | None
+        self,
+        x_enc: torch.Tensor,
+        x_mark_enc: torch.Tensor | None,
+        y_mark_dec: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         bsz, seq_len, n_vars = x_enc.shape
         label_len = min(self.label_len, seq_len)
@@ -150,6 +153,38 @@ class TSLibForecastAdapter(nn.Module):
             device=x_enc.device,
         )
         x_dec = torch.cat([context, zeros], dim=1)
+
+        dec_mark_len = self.label_len + self.pred_len
+        if y_mark_dec is not None:
+            if y_mark_dec.dim() != 3:
+                raise ValueError(
+                    f"y_mark_dec must be rank-3 [B,L,T], got shape={tuple(y_mark_dec.shape)}"
+                )
+            if y_mark_dec.size(0) != bsz:
+                raise ValueError(
+                    "y_mark_dec batch mismatch: "
+                    f"got {y_mark_dec.size(0)}, expected {bsz}"
+                )
+            if x_mark_enc is not None and y_mark_dec.size(-1) != x_mark_enc.size(-1):
+                raise ValueError(
+                    "y_mark_dec feature dim mismatch: "
+                    f"got {y_mark_dec.size(-1)}, expected {x_mark_enc.size(-1)}"
+                )
+
+            mark_dtype = x_mark_enc.dtype if x_mark_enc is not None else y_mark_dec.dtype
+            y_mark_dec = y_mark_dec.to(device=x_enc.device, dtype=mark_dtype)
+            if y_mark_dec.size(1) < dec_mark_len:
+                pad = torch.zeros(
+                    bsz,
+                    dec_mark_len - y_mark_dec.size(1),
+                    y_mark_dec.size(-1),
+                    dtype=y_mark_dec.dtype,
+                    device=y_mark_dec.device,
+                )
+                y_mark_dec = torch.cat([pad, y_mark_dec], dim=1)
+            else:
+                y_mark_dec = y_mark_dec[:, -dec_mark_len:, :]
+            return x_dec, y_mark_dec
 
         if x_mark_enc is None:
             return x_dec, None
@@ -185,11 +220,13 @@ class TSLibForecastAdapter(nn.Module):
         x_enc: torch.Tensor,
         x_mark_enc: torch.Tensor | None = None,
         meta_emb: torch.Tensor | None = None,
+        *,
+        y_mark_dec: torch.Tensor | None = None,
     ) -> torch.Tensor:
         # meta_emb is intentionally ignored for TSLib baselines.
         del meta_emb
 
-        x_dec, x_mark_dec = self._build_decoder_inputs(x_enc, x_mark_enc)
+        x_dec, x_mark_dec = self._build_decoder_inputs(x_enc, x_mark_enc, y_mark_dec=y_mark_dec)
         out = self.model(x_enc, x_mark_enc, x_dec, x_mark_dec)
         if isinstance(out, tuple):
             out = out[0]
