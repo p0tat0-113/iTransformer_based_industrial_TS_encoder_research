@@ -1,0 +1,60 @@
+plan_id: M0_quick_combo_rgpv_sa_outfuse_sharedpma_hgatebias_linear_k321_e10_vt_el1_predlen_small
+
+runs:
+  # Shared-PMA + e_layers=1 + output-space residual-gated fusion
+  # Add horizon-wise bias gate with linear init schedule.
+  - id_template: "SUP-{dataset}.M0RGOUTHGBL.sharedpma.el1.k321.e10.vt.pr{pred_len}.sd{seed}.small"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - model=M0
+      - model.e_layers=1
+      - model.multislot.k_per_scale=[3,2,1]
+      - model.multislot.slotizer.mode=pma
+      - model.multislot.slotizer.share_across_scales=true
+      - model.multislot.pma.kv_include_seeds=true
+      - model.multislot.slot_attn.enabled=true
+      - model.multislot.slot_attn.mode=post
+      - model.multislot.slot_fuse.mode=residual_gated_output
+      - model.multislot.slot_fuse.horizon_gate.enabled=true
+      - model.multislot.slot_fuse.horizon_gate.mode=bias
+      - model.multislot.slot_fuse.horizon_gate.init_schedule=linear
+      - model.multislot.slot_fuse.horizon_gate.init_start=-2.0
+      - model.multislot.slot_fuse.horizon_gate.init_end=-8.0
+      - model.d_model=128
+      - model.d_ff=128
+      - model.multislot.d_model=128
+      - train=downstream
+      - train.mode=ft
+      - train.freeze_epochs=0
+      - train.epochs=20
+      - train.stop_epoch=10
+      - train.batch_size=32
+      - train.patience=0
+      - train.ssl_ckpt_path=null
+      - train.val_flag=test
+      - optim.name=adam
+      - optim.scheduler=onecycle
+      - optim.onecycle_max_lr=0.0003
+      - optim.onecycle_pct_start=0.3
+      - optim.onecycle_anneal_strategy=cos
+      - optim.onecycle_div_factor=25
+      - optim.onecycle_final_div_factor=1000
+      - optim.onecycle_three_phase=false
+      - optim.onecycle_total_steps=0
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=m0-rgout+hgatebias+linear+sharedpma+pkv+post-sa-k321-e10-valtest-el1-pr{pred_len}-small
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1]
+      pred_len: [96,192,336,720]
+      seed: [0]
+
+ops: []
+cmps: []
+aggs: []

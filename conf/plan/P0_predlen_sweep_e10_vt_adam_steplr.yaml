@@ -29,9 +29,9 @@ runs:
       - run.hparams_tag=p0-adam-steplr-e10-valtest-pr{pred_len}
       - run.id={id}
     sweep:
-      dataset: [Weather, ETTh1, ETTh2, ETTm1, ETTm2, Exchange, AirQuality, AppliancesEnergy]
+      dataset: [Weather, ETTh1, ETTh2, ETTm1, ETTm2, Exchange]
       pred_len: [96,192,336,720]
-      seed: [0]
+      seed: [0,1,2]
 
 ops: []
 cmps: []
