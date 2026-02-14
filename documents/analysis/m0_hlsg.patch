@@ -1,0 +1,328 @@
+--- a/src/itransformer/models/m0.py
++++ b/src/itransformer/models/m0.py
+@@ -318,6 +318,7 @@
+         extra_slot_dropout: float = 0.0,
+         score_mode: str = "full",
+         score_rank: int = 0,
++        build_scorer: bool = True,
+     ):
+         super().__init__()
+         self.k_total = int(k_total)
+@@ -328,42 +329,52 @@
+         if self.k_extra <= 0:
+             raise ValueError("ResidualGatedFuse requires k_total >= 2")
+ 
++        self.build_scorer = bool(build_scorer)
+         hidden = int(hidden)
+-        if hidden <= 0:
+-            raise ValueError("hidden must be >= 1")
+         dropout = float(dropout)
+         self.extra_slot_dropout = float(extra_slot_dropout)
+         if self.extra_slot_dropout < 0.0 or self.extra_slot_dropout >= 1.0:
+             raise ValueError(
+                 f"slot_fuse.extra_slot_dropout must be in [0, 1), got {self.extra_slot_dropout}"
+             )
+-        self.score_mode = str(score_mode or "full").lower()
+-        if self.score_mode not in ("full", "lowrank"):
+-            raise ValueError(
+-                f"slot_fuse.score_mode must be one of: full, lowrank (got {self.score_mode})"
+-            )
+-        self.score_rank = int(score_rank)
+-        if self.score_mode == "lowrank" and self.score_rank <= 0:
+-            raise ValueError(
+-                "slot_fuse.score_rank must be >= 1 when slot_fuse.score_mode=lowrank "
+-                f"(got {self.score_rank})"
+-            )
++        self.score_mode = "none"
++        self.score_rank = 0
++        self.score_mlp = None
++        if self.build_scorer:
++            if hidden <= 0:
++                raise ValueError("hidden must be >= 1")
++            self.score_mode = str(score_mode or "full").lower()
++            if self.score_mode not in ("full", "lowrank"):
++                raise ValueError(
++                    f"slot_fuse.score_mode must be one of: full, lowrank (got {self.score_mode})"
++                )
++            self.score_rank = int(score_rank)
++            if self.score_mode == "lowrank" and self.score_rank <= 0:
++                raise ValueError(
++                    "slot_fuse.score_rank must be >= 1 when slot_fuse.score_mode=lowrank "
++                    f"(got {self.score_rank})"
++                )
+ 
+-        # score_i = MLP([u_L ; extra_i ; (extra_i - u_L)]) -> scalar
+-        if self.score_mode == "lowrank":
+-            score_in = LowRankLinear(3 * int(d_model), hidden, rank=self.score_rank, bias=True)
+-        else:
+-            score_in = nn.Linear(3 * int(d_model), hidden)
+-        self.score_mlp = nn.Sequential(
+-            score_in,
+-            nn.GELU(),
+-            nn.Dropout(dropout),
+-            nn.Linear(hidden, 1),
+-        )
++            # score_i = MLP([u_L ; extra_i ; (extra_i - u_L)]) -> scalar
++            if self.score_mode == "lowrank":
++                score_in = LowRankLinear(3 * int(d_model), hidden, rank=self.score_rank, bias=True)
++            else:
++                score_in = nn.Linear(3 * int(d_model), hidden)
++            self.score_mlp = nn.Sequential(
++                score_in,
++                nn.GELU(),
++                nn.Dropout(dropout),
++                nn.Linear(hidden, 1),
++            )
+         self.gate = nn.Linear(int(d_model), 1)
+         nn.init.constant_(self.gate.bias, -2.0)
+ 
+     def compute_alpha_g(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
++        if self.score_mlp is None:
++            raise RuntimeError(
++                "ResidualGatedFuse scorer is disabled (build_scorer=false); "
++                "compute_alpha_g() cannot be used in this configuration."
++            )
+         # x: [B, T, K, d]
+         bsz, tok, k, dim = x.shape
+         if k != self.k_total:
+@@ -513,6 +524,134 @@
+         return alpha
+ 
+ 
++class HorizonLowRankScorer(nn.Module):
++    """Horizon-aware Low-Rank Slot Gating (HLSG) scorer in representation space.
++
++    Computes horizon-wise slot weights alpha_{i,h} using a low-rank factorization:
++
++        a_i = W([u_L ; u_i ; (u_i - u_L)])   in R^r
++        score_{i,h} = <a_i, e_h> / (sqrt(r) * tau)
++        alpha_{i,h} = softmax_i(score_{i,h})
++
++    Inputs:
++      - baseline_u: [B, T, d]
++      - extras_u:   [B, T, K-1, d]
++    Output:
++      - alpha:      [B, T, K-1, H]  (H = pred_len)
++    """
++
++    def __init__(
++        self,
++        *,
++        d_model: int,
++        pred_len: int,
++        k_extra: int,
++        rank: int,
++        dropout: float,
++        norm: str = "layernorm",
++        tau: float = 1.0,
++        extra_slot_dropout: float = 0.0,
++    ):
++        super().__init__()
++        self.d_model = int(d_model)
++        self.pred_len = int(pred_len)
++        self.k_extra = int(k_extra)
++        self.rank = int(rank)
++        self.dropout_p = float(dropout)
++        self.norm_mode = str(norm or "layernorm").lower()
++        self.tau = float(tau)
++        self.extra_slot_dropout = float(extra_slot_dropout)
++
++        if self.d_model <= 0:
++            raise ValueError(f"d_model must be >= 1 (got {self.d_model})")
++        if self.pred_len <= 0:
++            raise ValueError(f"pred_len must be >= 1 (got {self.pred_len})")
++        if self.k_extra <= 0:
++            raise ValueError(f"k_extra must be >= 1 (got {self.k_extra})")
++        if self.rank <= 0:
++            raise ValueError(f"rank must be >= 1 (got {self.rank})")
++        if self.norm_mode not in ("layernorm", "l2", "none"):
++            raise ValueError(
++                "slot_fuse.hls_norm must be one of: layernorm, l2, none "
++                f"(got {self.norm_mode})"
++            )
++        if self.tau <= 0.0:
++            raise ValueError(f"slot_fuse.hls_tau must be > 0 (got {self.tau})")
++        if self.extra_slot_dropout < 0.0 or self.extra_slot_dropout >= 1.0:
++            raise ValueError(
++                "slot_fuse.extra_slot_dropout must be in [0, 1), "
++                f"got {self.extra_slot_dropout}"
++            )
++
++        self.u_norm = nn.LayerNorm(self.d_model) if self.norm_mode == "layernorm" else None
++        self.in_proj = nn.Linear(3 * self.d_model, self.rank, bias=True)
++        # Start from near-uniform alpha (scores≈0) to avoid random slot mixing at init.
++        # Gradients still flow into in_proj via h_emb.
++        nn.init.zeros_(self.in_proj.weight)
++        if self.in_proj.bias is not None:
++            nn.init.zeros_(self.in_proj.bias)
++        self.dropout = nn.Dropout(self.dropout_p)
++
++        # Horizon basis vectors e_h.
++        self.h_emb = nn.Parameter(torch.zeros(self.pred_len, self.rank))
++        nn.init.normal_(self.h_emb, std=0.02)
++
++        # Slot prior bias (helps encode global preference / scale preference with minimal params).
++        self.score_bias = nn.Parameter(torch.zeros(self.k_extra))
++
++    def _norm_u(self, u: torch.Tensor) -> torch.Tensor:
++        if self.norm_mode == "none":
++            return u
++        if self.norm_mode == "l2":
++            return F.normalize(u, p=2.0, dim=-1, eps=1e-8)
++        return self.u_norm(u)
++
++    def _slot_softmax(self, scores: torch.Tensor) -> torch.Tensor:
++        # scores: [B, T, K-1, H]
++        if self.training and self.extra_slot_dropout > 0.0:
++            keep = torch.rand_like(scores[..., 0]) > self.extra_slot_dropout  # [B, T, K-1]
++            all_dropped = ~keep.any(dim=2, keepdim=True)  # [B, T, 1]
++            if all_dropped.any():
++                max_idx = scores.mean(dim=-1).argmax(dim=2, keepdim=True)  # [B, T, 1]
++                rescue = torch.zeros_like(keep)
++                rescue.scatter_(2, max_idx, True)
++                keep = keep | (all_dropped.expand_as(keep) & rescue)
++            scores = scores.masked_fill(~keep.unsqueeze(-1), -1e9)
++        return torch.softmax(scores, dim=2)
++
++    def forward(self, baseline_u: torch.Tensor, extras_u: torch.Tensor) -> torch.Tensor:
++        # baseline_u: [B, T, d], extras_u: [B, T, K-1, d]
++        if baseline_u.dim() != 3:
++            raise ValueError(f"baseline_u must be [B,T,d] (got shape {tuple(baseline_u.shape)})")
++        if extras_u.dim() != 4:
++            raise ValueError(f"extras_u must be [B,T,K-1,d] (got shape {tuple(extras_u.shape)})")
++        bsz, tok, k_extra, dim = extras_u.shape
++        if k_extra != self.k_extra:
++            raise ValueError(f"Expected k_extra={self.k_extra}, got {k_extra}")
++        if dim != self.d_model:
++            raise ValueError(f"Expected d_model={self.d_model}, got {dim}")
++
++        base = baseline_u.unsqueeze(2).expand_as(extras_u)  # [B, T, K-1, d]
++        delta = extras_u - base
++
++        base_n = self._norm_u(base)
++        extras_n = self._norm_u(extras_u)
++        delta_n = self._norm_u(delta)
++        feat = torch.cat([base_n, extras_n, delta_n], dim=-1)  # [B, T, K-1, 3d]
++
++        a = self.in_proj(feat)  # [B, T, K-1, r]
++        a = F.gelu(a)
++        a = self.dropout(a)
++
++        denom = (float(self.rank) ** 0.5) * self.tau
++        # scores: [B, T, K-1, H]
++        scores = torch.einsum("btkr,hr->btkh", a, self.h_emb) / denom
++        scores = scores + self.score_bias.view(1, 1, -1, 1)
++
++        alpha = self._slot_softmax(scores)  # [B, T, K-1, H]
++        return alpha
++
++
+ class SlotSelfAttention(nn.Module):
+     """Self-attention over the slot axis K for each variable token independently."""
+ 
+@@ -992,6 +1131,10 @@
+         self.output_attn_norm = "layernorm"
+         self.output_attn_tau = 1.0
+         self.output_attn_scorer = None
++        self.hls_rank = 32
++        self.hls_norm = "layernorm"
++        self.hls_tau = 1.0
++        self.output_hls_scorer = None
+         fuse_extra_dropout = float(getattr(fuse_cfg, "extra_slot_dropout", 0.0) or 0.0)
+         fuse_score_mode = str(getattr(fuse_cfg, "score_mode", "full") or "full").lower()
+         fuse_score_rank = int(getattr(fuse_cfg, "score_rank", 0) or 0)
+@@ -1001,15 +1144,18 @@
+                 f"(got {fuse_score_mode})"
+             )
+         self.output_alpha_source = str(getattr(fuse_cfg, "alpha_source", "repr") or "repr").lower()
+-        if self.output_alpha_source not in ("repr", "output_attn"):
++        if self.output_alpha_source not in ("repr", "output_attn", "hls_lr"):
+             raise ValueError(
+-                "model.multislot.slot_fuse.alpha_source must be one of: repr, output_attn "
++                "model.multislot.slot_fuse.alpha_source must be one of: repr, output_attn, hls_lr "
+                 f"(got {self.output_alpha_source})"
+             )
+         self.output_attn_rank = int(getattr(fuse_cfg, "output_attn_rank", 64) or 64)
+         self.output_attn_use_delta_key = bool(getattr(fuse_cfg, "output_attn_use_delta_key", True))
+         self.output_attn_norm = str(getattr(fuse_cfg, "output_attn_norm", "layernorm") or "layernorm").lower()
+         self.output_attn_tau = float(getattr(fuse_cfg, "output_attn_tau", 1.0) or 1.0)
++        self.hls_rank = int(getattr(fuse_cfg, "hls_rank", 32) or 32)
++        self.hls_norm = str(getattr(fuse_cfg, "hls_norm", "layernorm") or "layernorm").lower()
++        self.hls_tau = float(getattr(fuse_cfg, "hls_tau", 1.0) or 1.0)
+         hgate_cfg = getattr(fuse_cfg, "horizon_gate", None)
+         self.output_hgate_enabled = bool(getattr(hgate_cfg, "enabled", False))
+         self.output_hgate_mode = str(getattr(hgate_cfg, "mode", "linear") or "linear").lower()
+@@ -1063,11 +1209,21 @@
+                 "model.multislot.slot_fuse.alpha_source=output_attn requires "
+                 "slot_fuse.mode=residual_gated_output"
+             )
++        if self.output_alpha_source == "hls_lr" and fuse_mode != "residual_gated_output":
++            raise ValueError(
++                "model.multislot.slot_fuse.alpha_source=hls_lr requires "
++                "slot_fuse.mode=residual_gated_output"
++            )
+         if self.output_halpha_enabled and self.output_alpha_source != "repr":
+             raise ValueError(
+                 "model.multislot.slot_fuse.horizon_alpha.enabled=true currently requires "
+                 "slot_fuse.alpha_source=repr"
+             )
++        if self.output_alpha_source == "hls_lr" and self.output_halpha_enabled:
++            raise ValueError(
++                "model.multislot.slot_fuse.alpha_source=hls_lr cannot be combined with "
++                "slot_fuse.horizon_alpha.enabled=true (both define horizon-wise alpha)"
++            )
+ 
+         def _find_global_slot_idx() -> int | None:
+             offset = 0
+@@ -1114,6 +1270,8 @@
+                             "global_ma decomposition requires a global scale p=seq_len in model.multislot.scales"
+                         )
+                     baseline_idx = self.k_total - 1
++                # Only build the heavy repr-space scorer when it is actually used.
++                build_repr_scorer = (self.output_alpha_source == "repr") and (not self.output_halpha_enabled)
+                 self.slot_fuse = ResidualGatedFuse(
+                     int(cfg.model.d_model),
+                     k_total=self.k_total,
+@@ -1123,6 +1281,7 @@
+                     extra_slot_dropout=fuse_extra_dropout,
+                     score_mode=fuse_score_mode,
+                     score_rank=fuse_score_rank,
++                    build_scorer=build_repr_scorer,
+                 )
+                 self.slot_projectors = nn.ModuleList(
+                     [nn.Linear(int(cfg.model.d_model), int(cfg.data.pred_len), bias=True) for _ in range(self.k_total)]
+@@ -1150,6 +1309,17 @@
+                         tau=self.output_attn_tau,
+                         extra_slot_dropout=fuse_extra_dropout,
+                     )
++                if self.output_alpha_source == "hls_lr":
++                    self.output_hls_scorer = HorizonLowRankScorer(
++                        d_model=int(cfg.model.d_model),
++                        pred_len=int(cfg.data.pred_len),
++                        k_extra=self.k_total - 1,
++                        rank=self.hls_rank,
++                        dropout=float(cfg.model.dropout),
++                        norm=self.hls_norm,
++                        tau=self.hls_tau,
++                        extra_slot_dropout=fuse_extra_dropout,
++                    )
+                 if self.output_hgate_enabled:
+                     pred_len = int(cfg.data.pred_len)
+                     hbias = _make_hgate_bias_schedule(
+@@ -1395,6 +1565,16 @@
+                         raise RuntimeError("output attention scorer is not initialized")
+                     alpha = self.output_attn_scorer(baseline, extras)  # [B, N, K-1, 1]
+                     g = torch.sigmoid(self.slot_fuse.gate(enc_x[:, :, baseline_idx, :]))  # [B, N, 1]
++                elif self.output_alpha_source == "hls_lr":
++                    if self.output_hls_scorer is None:
++                        raise RuntimeError("HLSG scorer is not initialized")
++                    base_u = enc_x[:, :, baseline_idx, :]  # [B, N, d]
++                    extras_u = torch.cat(
++                        [enc_x[:, :, :baseline_idx, :], enc_x[:, :, baseline_idx + 1 :, :]],
++                        dim=2,
++                    )  # [B, N, K-1, d]
++                    alpha = self.output_hls_scorer(base_u, extras_u)  # [B, N, K-1, pred_len]
++                    g = torch.sigmoid(self.slot_fuse.gate(base_u))  # [B, N, 1]
+                 else:
+                     alpha, g = self.slot_fuse.compute_alpha_g(enc_x)  # [B, N, K-1, 1], [B, N, 1]
+ 

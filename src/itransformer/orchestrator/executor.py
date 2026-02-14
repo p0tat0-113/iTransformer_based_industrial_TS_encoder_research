@@ -16,7 +16,9 @@ ENTRYPOINTS = {
 }
 
 
-def _status_path(artifacts_root: str, kind: str, spec_id: str) -> str:
+def _status_path(artifacts_root: str, kind: str, spec_id: str, *, plan_id: str | None = None) -> str:
+    if kind == "run" and plan_id:
+        return os.path.join(artifacts_root, "runs", plan_id, spec_id, "status.json")
     base = {
         "run": "runs",
         "op": "ops",
@@ -36,10 +38,18 @@ def _load_status(path: str) -> Optional[dict]:
         return None
 
 
-def _run_spec(spec: Dict[str, str], log_path: str) -> int:
+def _override_key_exists(overrides: List[str], key: str) -> bool:
+    prefix = f"{key}="
+    return any(str(item).startswith(prefix) for item in (overrides or []))
+
+
+def _run_spec(spec: Dict[str, str], log_path: str, extra_overrides: Optional[List[str]] = None) -> int:
     entry = spec["entry"]
     module = ENTRYPOINTS.get(entry, entry)
-    cmd = ["python", "-m", module] + spec.get("overrides", [])
+    overrides = list(spec.get("overrides", []) or [])
+    if extra_overrides:
+        overrides.extend(extra_overrides)
+    cmd = ["python", "-m", module] + overrides
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     with open(log_path, "w", encoding="utf-8") as logf:
         proc = subprocess.run(cmd, stdout=logf, stderr=logf)
@@ -77,7 +87,7 @@ def execute_plan(
             if filter_substr and filter_substr not in spec_id:
                 continue
 
-            status_path = _status_path(artifacts_root, kind, spec_id)
+            status_path = _status_path(artifacts_root, kind, spec_id, plan_id=plan_id)
             status = _load_status(status_path)
             if resume and status and status.get("state") == "completed":
                 manifest["specs"].append(
@@ -85,8 +95,16 @@ def execute_plan(
                 )
                 continue
 
+            extra_overrides: List[str] = []
+            if kind == "run":
+                # Keep runs grouped by plan to avoid a flat runs/ directory.
+                run_overrides = list(spec.get("overrides", []) or [])
+                if not _override_key_exists(run_overrides, "paths.runs_dir"):
+                    plan_runs_dir = os.path.join(artifacts_root, "runs", plan_id)
+                    extra_overrides.append(f"paths.runs_dir={plan_runs_dir}")
+
             log_path = os.path.join(logs_dir, f"{kind}__{spec_id}.log")
-            ret = _run_spec(spec, log_path)
+            ret = _run_spec(spec, log_path, extra_overrides=extra_overrides)
             manifest["specs"].append(
                 {
                     "id": spec_id,

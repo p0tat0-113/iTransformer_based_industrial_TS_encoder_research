@@ -10,10 +10,12 @@ from omegaconf import OmegaConf
 
 from itransformer.analysis.cka import linear_cka
 from itransformer.analysis.utils import (
+    iter_run_dirs,
     load_run_checkpoint,
     load_run_metrics,
     load_state,
     param_count,
+    resolve_run_dir,
 )
 from itransformer.data import data_provider
 from itransformer.evals.utils import measure_inference_time
@@ -90,15 +92,8 @@ def _select_cfg_value(cfg_dict: dict, key_path: str):
 
 
 def _iter_run_configs(runs_dir: str):
-    if not os.path.isdir(runs_dir):
-        return
-    for name in sorted(os.listdir(runs_dir)):
-        run_dir = os.path.join(runs_dir, name)
-        if not os.path.isdir(run_dir):
-            continue
+    for name, run_dir in iter_run_dirs(runs_dir):
         cfg_path = os.path.join(run_dir, "config.yaml")
-        if not os.path.exists(cfg_path):
-            continue
         try:
             cfg = OmegaConf.to_container(OmegaConf.load(cfg_path), resolve=True)
         except Exception:
@@ -512,7 +507,7 @@ def main(cfg) -> None:
                 results["max_memory_mb"] = torch.cuda.max_memory_allocated(device) / (1024**2)
 
             if analysis_code == "F2":
-                run_dir = os.path.join(cfg.paths.runs_dir, run_id)
+                run_dir = resolve_run_dir(run_id, cfg.paths.runs_dir)
                 metrics, source = load_run_metrics(run_dir)
                 if metrics:
                     results["metrics_source"] = source
@@ -606,8 +601,8 @@ def main(cfg) -> None:
         out_dir = os.path.join(cfg.paths.cmp_dir, report_id)
         os.makedirs(out_dir, exist_ok=True)
 
-        left_dir = os.path.join(cfg.paths.runs_dir, cfg.analysis.left)
-        right_dir = os.path.join(cfg.paths.runs_dir, cfg.analysis.right)
+        left_dir = resolve_run_dir(cfg.analysis.left, cfg.paths.runs_dir)
+        right_dir = resolve_run_dir(cfg.analysis.right, cfg.paths.runs_dir)
         left_metrics, _ = load_run_metrics(left_dir)
         right_metrics, _ = load_run_metrics(right_dir)
         left_vals = _extract_mse_mae(left_metrics)
@@ -658,7 +653,7 @@ def main(cfg) -> None:
         metric_keys = list(getattr(cfg.analysis, "metric_keys", []) or [])
         rows = []
         for run_id in run_ids:
-            run_dir = os.path.join(cfg.paths.runs_dir, run_id)
+            run_dir = resolve_run_dir(run_id, cfg.paths.runs_dir)
             metrics, _ = load_run_metrics(run_dir)
             flat = _flatten_metrics(metrics)
             row_metrics = {k: flat.get(k) for k in metric_keys} if metric_keys else flat

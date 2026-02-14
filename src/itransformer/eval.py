@@ -8,7 +8,7 @@ import hydra
 import torch
 from omegaconf import OmegaConf
 
-from itransformer.analysis.utils import load_run_checkpoint, load_state
+from itransformer.analysis.utils import load_run_checkpoint, load_state, resolve_run_dir
 from itransformer.data import data_provider
 from itransformer.evals.utils import (
     apply_bias_scale,
@@ -91,10 +91,14 @@ def _infer_ckpt_cfg(cfg, ckpt_path: str, ckpt_payload: dict | None) -> dict | No
         return ckpt_payload.get("cfg")
 
     if getattr(cfg.eval, "on_run_id", ""):
-        run_cfg = os.path.join(cfg.paths.runs_dir, cfg.eval.on_run_id, "config.yaml")
-        loaded = _load_cfg_from_yaml(run_cfg)
-        if isinstance(loaded, dict):
-            return loaded
+        try:
+            run_dir = resolve_run_dir(cfg.eval.on_run_id, cfg.paths.runs_dir)
+            run_cfg = os.path.join(run_dir, "config.yaml")
+            loaded = _load_cfg_from_yaml(run_cfg)
+            if isinstance(loaded, dict):
+                return loaded
+        except (FileNotFoundError, RuntimeError):
+            pass
 
     ckpt_dir_cfg = os.path.join(os.path.dirname(ckpt_path), "config.yaml")
     loaded = _load_cfg_from_yaml(ckpt_dir_cfg)
