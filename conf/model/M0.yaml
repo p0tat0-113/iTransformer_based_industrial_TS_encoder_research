@@ -85,7 +85,7 @@ multislot:
     extra_slot_dropout: 0.0   # train-time dropout on extra slots only (baseline slot is never dropped)
     horizon_gate:
       enabled: false
-      mode: linear   # linear | bias
+      mode: linear   # linear | bias | bias_per_var
       init_schedule: linear   # linear | sigmix_v1
       init_start: -2.0
       init_end: -4.0

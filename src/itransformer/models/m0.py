@@ -1122,6 +1122,7 @@ class ITransformerM0(nn.Module):
         self.output_hgate_init_schedule = "linear"
         self.output_hgate_linear = None
         self.output_hgate_bias = None
+        self.output_hgate_bias_per_var = None
         self.output_halpha_enabled = False
         self.output_halpha_hidden = 0
         self.output_halpha_mlp = None
@@ -1159,9 +1160,9 @@ class ITransformerM0(nn.Module):
         hgate_cfg = getattr(fuse_cfg, "horizon_gate", None)
         self.output_hgate_enabled = bool(getattr(hgate_cfg, "enabled", False))
         self.output_hgate_mode = str(getattr(hgate_cfg, "mode", "linear") or "linear").lower()
-        if self.output_hgate_mode not in ("linear", "bias"):
+        if self.output_hgate_mode not in ("linear", "bias", "bias_per_var"):
             raise ValueError(
-                "model.multislot.slot_fuse.horizon_gate.mode must be one of: linear, bias "
+                "model.multislot.slot_fuse.horizon_gate.mode must be one of: linear, bias, bias_per_var "
                 f"(got {self.output_hgate_mode})"
         )
         self.output_hgate_init_schedule = str(getattr(hgate_cfg, "init_schedule", "linear") or "linear").lower()
@@ -1333,8 +1334,18 @@ class ITransformerM0(nn.Module):
                         nn.init.zeros_(self.output_hgate_linear.weight)
                         with torch.no_grad():
                             self.output_hgate_linear.bias.copy_(hbias)
-                    else:
+                    elif self.output_hgate_mode == "bias":
                         self.output_hgate_bias = nn.Parameter(hbias)
+                    else:
+                        n_gate_vars = int(getattr(cfg.data, "enc_in", 0) or 0)
+                        if n_gate_vars <= 0:
+                            raise ValueError(
+                                "model.multislot.slot_fuse.horizon_gate.mode=bias_per_var requires "
+                                "data.enc_in >= 1"
+                            )
+                        self.output_hgate_bias_per_var = nn.Parameter(
+                            hbias.unsqueeze(0).repeat(n_gate_vars, 1)
+                        )
                 if self.global_ma_enabled:
                     d_model = int(cfg.model.d_model)
                     pred_len = int(cfg.data.pred_len)
@@ -1586,10 +1597,19 @@ class ITransformerM0(nn.Module):
                     g_h = torch.sigmoid(
                         self.output_hgate_linear(enc_x[:, :, baseline_idx, :])
                     )  # [B, N, pred_len]
-                else:
+                elif self.output_hgate_mode == "bias":
                     if self.output_hgate_bias is None:
                         raise RuntimeError("horizon gate bias is not initialized")
                     g_h = torch.sigmoid(self.output_hgate_bias).view(1, 1, -1)  # [1, 1, pred_len]
+                else:
+                    if self.output_hgate_bias_per_var is None:
+                        raise RuntimeError("horizon gate per-variable bias is not initialized")
+                    if n_vars > self.output_hgate_bias_per_var.size(0):
+                        raise RuntimeError(
+                            "horizon gate per-variable bias has fewer variables than input "
+                            f"(got gate_vars={self.output_hgate_bias_per_var.size(0)}, input_vars={n_vars})"
+                        )
+                    g_h = torch.sigmoid(self.output_hgate_bias_per_var[:n_vars, :]).unsqueeze(0)
                 fused_pred = baseline + g_h * corr  # [B, N, pred_len]
             else:
                 if self.output_halpha_enabled:
