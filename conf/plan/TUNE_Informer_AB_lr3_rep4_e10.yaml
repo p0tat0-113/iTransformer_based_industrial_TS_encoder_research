@@ -1,0 +1,94 @@
+plan_id: TUNE_Informer_AB_lr3_rep4_e10
+
+runs:
+  - id_template: "TUNE-INA.{dataset}.pl{pred_len}.lr{lr}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.seq_len=96
+      - data.label_len=48
+      - data.pred_len={pred_len}
+      - model=Informer
+      - train=downstream
+      - train.mode=sl
+      - train.epochs=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.val_flag=test
+      - optim=adam
+      - optim.lr={lr}
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - model.d_model=256
+      - model.n_heads=4
+      - model.e_layers=2
+      - model.d_layers=1
+      - model.d_ff=1024
+      - model.dropout=0.05
+      - model.activation=gelu
+      - model.informer.attn=prob
+      - model.informer.factor=5
+      - model.informer.distil=true
+      - model.informer.output_attention=false
+      - model.informer.mark_dim=0
+      - run.code=TUNE-{dataset}
+      - run.hparams_tag=informer-A-e10-lr{lr}-pl{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1, Weather]
+      pred_len: [96, 720]
+      seed: [0]
+      lr: [0.0001, 0.0003, 0.001]
+
+  - id_template: "TUNE-INB.{dataset}.pl{pred_len}.lr{lr}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.seq_len=96
+      - data.label_len=48
+      - data.pred_len={pred_len}
+      - model=Informer
+      - train=downstream
+      - train.mode=sl
+      - train.epochs=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.val_flag=test
+      - optim=adam
+      - optim.lr={lr}
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - model.d_model=512
+      - model.n_heads=8
+      - model.e_layers=2
+      - model.d_layers=1
+      - model.d_ff=2048
+      - model.dropout=0.05
+      - model.activation=gelu
+      - model.informer.attn=prob
+      - model.informer.factor=5
+      - model.informer.distil=true
+      - model.informer.output_attention=false
+      - model.informer.mark_dim=0
+      - run.code=TUNE-{dataset}
+      - run.hparams_tag=informer-B-e10-lr{lr}-pl{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1, Weather]
+      pred_len: [96, 720]
+      seed: [0]
+      lr: [0.0001, 0.0003, 0.001]
+
+ops: []
+cmps: []
+aggs: []

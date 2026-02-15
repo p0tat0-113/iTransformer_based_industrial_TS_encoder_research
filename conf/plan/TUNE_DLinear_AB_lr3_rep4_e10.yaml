@@ -1,0 +1,74 @@
+plan_id: TUNE_DLinear_AB_lr3_rep4_e10
+
+runs:
+  - id_template: "TUNE-DLA.{dataset}.pl{pred_len}.lr{lr}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.seq_len=96
+      - data.label_len=48
+      - data.pred_len={pred_len}
+      - model=DLinear
+      - train=downstream
+      - train.mode=sl
+      - train.epochs=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.val_flag=test
+      - optim=adam
+      - optim.lr={lr}
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - model.dlinear.kernel_size=25
+      - model.dlinear.individual=false
+      - run.code=TUNE-{dataset}
+      - run.hparams_tag=dlinear-A-e10-lr{lr}-pl{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1, Weather]
+      pred_len: [96, 720]
+      seed: [0]
+      lr: [0.0001, 0.0005, 0.005]
+
+  - id_template: "TUNE-DLB.{dataset}.pl{pred_len}.lr{lr}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.seq_len=96
+      - data.label_len=48
+      - data.pred_len={pred_len}
+      - model=DLinear
+      - train=downstream
+      - train.mode=sl
+      - train.epochs=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.val_flag=test
+      - optim=adam
+      - optim.lr={lr}
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - model.dlinear.kernel_size=25
+      - model.dlinear.individual=true
+      - run.code=TUNE-{dataset}
+      - run.hparams_tag=dlinear-B-e10-lr{lr}-pl{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1, Weather]
+      pred_len: [96, 720]
+      seed: [0]
+      lr: [0.0001, 0.0005, 0.005]
+
+ops: []
+cmps: []
+aggs: []

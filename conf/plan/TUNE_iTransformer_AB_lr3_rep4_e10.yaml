@@ -1,0 +1,84 @@
+plan_id: TUNE_iTransformer_AB_lr3_rep4_e10
+
+runs:
+  - id_template: "TUNE-ITA.{dataset}.pl{pred_len}.lr{lr}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.seq_len=96
+      - data.label_len=48
+      - data.pred_len={pred_len}
+      - model=P0
+      - train=downstream
+      - train.mode=sl
+      - train.epochs=10
+      - train.batch_size=32
+      - train.patience=3
+      - train.val_flag=test
+      - optim=adam
+      - optim.lr={lr}
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - model.e_layers=2
+      - model.d_model=128
+      - model.d_ff=128
+      - model.n_heads=8
+      - model.dropout=0.1
+      - model.activation=gelu
+      - model.use_norm=true
+      - run.code=TUNE-{dataset}
+      - run.hparams_tag=itr-A-e10-lr{lr}-pl{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1, Weather]
+      pred_len: [96, 720]
+      seed: [0]
+      lr: [0.0001, 0.0003, 0.001]
+
+  - id_template: "TUNE-ITB.{dataset}.pl{pred_len}.lr{lr}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.seq_len=96
+      - data.label_len=48
+      - data.pred_len={pred_len}
+      - model=P0
+      - train=downstream
+      - train.mode=sl
+      - train.epochs=10
+      - train.batch_size=32
+      - train.patience=3
+      - train.val_flag=test
+      - optim=adam
+      - optim.lr={lr}
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - model.e_layers=3
+      - model.d_model=512
+      - model.d_ff=512
+      - model.n_heads=8
+      - model.dropout=0.1
+      - model.activation=gelu
+      - model.use_norm=true
+      - run.code=TUNE-{dataset}
+      - run.hparams_tag=itr-B-e10-lr{lr}-pl{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1, Weather]
+      pred_len: [96, 720]
+      seed: [0]
+      lr: [0.0001, 0.0003, 0.001]
+
+ops: []
+cmps: []
+aggs: []

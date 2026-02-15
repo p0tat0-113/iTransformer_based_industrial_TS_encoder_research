@@ -1,0 +1,36 @@
+plan_id: Informer_quick_etth1_pr96_e5
+
+runs:
+  # Quick Informer training for benchmark-ready checkpoint (ETTh1, pred_len=96).
+  - id_template: "SUP-{dataset}.Informer.e5.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - model=Informer
+      - train=downstream
+      - train.mode=sl
+      - train.epochs=5
+      - train.stop_epoch=0
+      - train.batch_size=64
+      - train.patience=2
+      - train.num_workers=4
+      - train.val_flag=test
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=none
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=informer-e5-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1]
+      pred_len: [96]
+      seed: [0]
+
+ops: []
+cmps: []
+aggs: []

@@ -1,0 +1,180 @@
+plan_id: SMK_baselines_presetA_etth1_pr96
+
+runs:
+  - id: "SMK-ETTh1.PatchTST.A.pr96.lr3e4.sd0"
+    entry: downstream
+    overrides:
+      - data=ETTh1
+      - data.seq_len=96
+      - data.label_len=48
+      - data.pred_len=96
+      - model=PatchTST
+      - train=downstream
+      - train.mode=sl
+      - train.epochs=20
+      - train.batch_size=128
+      - train.patience=0
+      - train.val_flag=test
+      - optim=adam
+      - optim.scheduler=onecycle
+      - optim.onecycle_max_lr=0.0003
+      - optim.onecycle_pct_start=0.4
+      - optim.onecycle_total_steps=0
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed=0
+      - runtime.deterministic=true
+      - model.d_model=16
+      - model.n_heads=4
+      - model.e_layers=3
+      - model.d_ff=128
+      - model.dropout=0.3
+      - model.patchtst.patch_len=16
+      - model.patchtst.stride=8
+      - model.patchtst.padding=8
+      - model.patchtst.head_dropout=0.3
+      - run.code=SMK-ETTh1
+      - run.hparams_tag=patchtst-A-pr96
+      - run.id=SMK-ETTh1.PatchTST.A.pr96.lr3e4.sd0
+
+  - id: "SMK-ETTh1.Informer.A.pr96.lr3e4.sd0"
+    entry: downstream
+    overrides:
+      - data=ETTh1
+      - data.seq_len=96
+      - data.label_len=48
+      - data.pred_len=96
+      - model=Informer
+      - train=downstream
+      - train.mode=sl
+      - train.epochs=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.val_flag=test
+      - optim=adam
+      - optim.lr=0.0003
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed=0
+      - runtime.deterministic=true
+      - model.d_model=256
+      - model.n_heads=4
+      - model.e_layers=2
+      - model.d_layers=1
+      - model.d_ff=1024
+      - model.dropout=0.05
+      - model.activation=gelu
+      - model.informer.attn=prob
+      - model.informer.factor=5
+      - model.informer.distil=true
+      - model.informer.output_attention=false
+      - model.informer.mark_dim=0
+      - run.code=SMK-ETTh1
+      - run.hparams_tag=informer-A-pr96
+      - run.id=SMK-ETTh1.Informer.A.pr96.lr3e4.sd0
+
+  - id: "SMK-ETTh1.iTransformer.A.pr96.lr1e4.sd0"
+    entry: downstream
+    overrides:
+      - data=ETTh1
+      - data.seq_len=96
+      - data.label_len=48
+      - data.pred_len=96
+      - model=P0
+      - train=downstream
+      - train.mode=sl
+      - train.epochs=20
+      - train.batch_size=32
+      - train.patience=3
+      - train.val_flag=test
+      - optim=adam
+      - optim.lr=0.0001
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed=0
+      - runtime.deterministic=true
+      - model.e_layers=2
+      - model.d_model=128
+      - model.d_ff=128
+      - model.n_heads=8
+      - model.dropout=0.1
+      - model.activation=gelu
+      - model.use_norm=true
+      - run.code=SMK-ETTh1
+      - run.hparams_tag=itr-A-pr96
+      - run.id=SMK-ETTh1.iTransformer.A.pr96.lr1e4.sd0
+
+  - id: "SMK-ETTh1.DLinear.A.pr96.lr5e4.sd0"
+    entry: downstream
+    overrides:
+      - data=ETTh1
+      - data.seq_len=96
+      - data.label_len=48
+      - data.pred_len=96
+      - model=DLinear
+      - train=downstream
+      - train.mode=sl
+      - train.epochs=20
+      - train.batch_size=128
+      - train.patience=0
+      - train.val_flag=test
+      - optim=adam
+      - optim.lr=0.0005
+      - optim.scheduler=steplr
+      - optim.step_size=1
+      - optim.gamma=0.5
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed=0
+      - runtime.deterministic=true
+      - model.dlinear.kernel_size=25
+      - model.dlinear.individual=false
+      - run.code=SMK-ETTh1
+      - run.hparams_tag=dlinear-A-pr96
+      - run.id=SMK-ETTh1.DLinear.A.pr96.lr5e4.sd0
+
+  - id: "SMK-ETTh1.TiDE.A.pr96.lr1e4.sd0"
+    entry: downstream
+    overrides:
+      - data=ETTh1
+      - data.seq_len=96
+      - data.label_len=48
+      - data.pred_len=96
+      - model=TiDE
+      - train=downstream
+      - train.mode=sl
+      - train.epochs=20
+      - train.batch_size=128
+      - train.patience=0
+      - train.val_flag=test
+      - optim=adam
+      - optim.lr=0.0001
+      - optim.scheduler=cosine
+      - optim.min_lr=0.0
+      - optim.t_max=0
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed=0
+      - runtime.deterministic=true
+      - model.use_norm=true
+      - model.d_model=256
+      - model.e_layers=2
+      - model.d_layers=2
+      - model.d_ff=128
+      - model.dropout=0.3
+      - model.tide.feature_encode_dim=2
+      - model.tide.decode_dim=8
+      - model.tide.bias=true
+      - run.code=SMK-ETTh1
+      - run.hparams_tag=tide-A-pr96
+      - run.id=SMK-ETTh1.TiDE.A.pr96.lr1e4.sd0
+
+ops: []
+cmps: []
+aggs: []

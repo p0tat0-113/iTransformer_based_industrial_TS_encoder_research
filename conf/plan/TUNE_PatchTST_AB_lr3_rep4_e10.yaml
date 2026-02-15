@@ -1,0 +1,88 @@
+plan_id: TUNE_PatchTST_AB_lr3_rep4_e10
+
+runs:
+  - id_template: "TUNE-PTA.{dataset}.pl{pred_len}.mlr{max_lr}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.seq_len=96
+      - data.label_len=48
+      - data.pred_len={pred_len}
+      - model=PatchTST
+      - train=downstream
+      - train.mode=sl
+      - train.epochs=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.val_flag=test
+      - optim=adam
+      - optim.scheduler=onecycle
+      - optim.onecycle_max_lr={max_lr}
+      - optim.onecycle_pct_start=0.4
+      - optim.onecycle_total_steps=0
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - model.d_model=16
+      - model.n_heads=4
+      - model.e_layers=3
+      - model.d_ff=128
+      - model.dropout=0.3
+      - model.patchtst.patch_len=16
+      - model.patchtst.stride=8
+      - model.patchtst.padding=8
+      - model.patchtst.head_dropout=0.3
+      - run.code=TUNE-{dataset}
+      - run.hparams_tag=patchtst-A-e10-mlr{max_lr}-pl{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1, Weather]
+      pred_len: [96, 720]
+      seed: [0]
+      max_lr: [0.0001, 0.0003, 0.001]
+
+  - id_template: "TUNE-PTB.{dataset}.pl{pred_len}.mlr{max_lr}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.seq_len=96
+      - data.label_len=48
+      - data.pred_len={pred_len}
+      - model=PatchTST
+      - train=downstream
+      - train.mode=sl
+      - train.epochs=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.val_flag=test
+      - optim=adam
+      - optim.scheduler=onecycle
+      - optim.onecycle_max_lr={max_lr}
+      - optim.onecycle_pct_start=0.4
+      - optim.onecycle_total_steps=0
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - model.d_model=128
+      - model.n_heads=16
+      - model.e_layers=3
+      - model.d_ff=256
+      - model.dropout=0.2
+      - model.patchtst.patch_len=16
+      - model.patchtst.stride=8
+      - model.patchtst.padding=8
+      - model.patchtst.head_dropout=0.2
+      - run.code=TUNE-{dataset}
+      - run.hparams_tag=patchtst-B-e10-mlr{max_lr}-pl{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1, Weather]
+      pred_len: [96, 720]
+      seed: [0]
+      max_lr: [0.0001, 0.0003, 0.001]
+
+ops: []
+cmps: []
+aggs: []

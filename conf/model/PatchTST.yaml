@@ -1,0 +1,29 @@
+variant: PatchTST
+d_model: 512
+n_heads: 8
+e_layers: 3
+d_ff: 2048
+dropout: 0.1
+activation: gelu
+use_norm: true
+d_layers: 1
+
+patchtst:
+  patch_len: 16
+  stride: 8
+  padding: 8
+  head_dropout: 0.1
+
+meta:
+  enabled: false
+  mode: none
+  source: none
+  proj: linear
+  mlp_hidden: 512
+
+patch:
+  enabled: false
+  patch_len: 0
+  mode: none
+  local_win: 0
+  use_pos_emb: false

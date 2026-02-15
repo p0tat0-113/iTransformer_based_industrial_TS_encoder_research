@@ -1,0 +1,40 @@
+plan_id: Informer_attn_prob_full_etth1_pr96_e5
+
+runs:
+  # 2x2 benchmark prep: train two checkpoints with identical settings except attention mode.
+  # - attn=prob checkpoint
+  # - attn=full checkpoint
+  - id_template: "SUP-{dataset}.Informer.{attn}.e5.pr{pred_len}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.pred_len={pred_len}
+      - model=Informer
+      - model.informer.attn={attn}
+      - train=downstream
+      - train.mode=sl
+      - train.epochs=5
+      - train.stop_epoch=0
+      - train.batch_size=64
+      - train.patience=2
+      - train.num_workers=4
+      - train.val_flag=test
+      - optim.name=adam
+      - optim.lr=0.0001
+      - optim.scheduler=none
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - run.code=SUP-{dataset}
+      - run.hparams_tag=informer-{attn}-e5-pr{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1]
+      pred_len: [96]
+      attn: [prob, full]
+      seed: [0]
+
+ops: []
+cmps: []
+aggs: []

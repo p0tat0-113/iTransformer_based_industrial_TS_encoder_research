@@ -191,7 +191,8 @@ def _evaluate(model, loader, device, pred_len, meta_emb=None, *, use_tslib: bool
                 x_mark = torch.as_tensor(batch_x_mark, dtype=torch.float32, device=device)
             if batch_y_mark is not None:
                 y_mark = torch.as_tensor(batch_y_mark, dtype=torch.float32, device=device)
-            if use_tslib:
+            needs_mark = bool(getattr(model, "needs_y_mark_dec", False))
+            if use_tslib or needs_mark:
                 out = model(x_enc, x_mark, meta_emb, y_mark_dec=y_mark)
             elif meta_emb is None:
                 out = model(x_enc, x_mark)
@@ -545,7 +546,8 @@ def main(cfg) -> None:
             true = true[:, -cfg.data.pred_len :, :]
 
             optimizer.zero_grad()
-            if use_tslib:
+            needs_mark = bool(getattr(model, "needs_y_mark_dec", False))
+            if use_tslib or needs_mark:
                 out = model(x_enc, x_mark, meta_emb, y_mark_dec=y_mark)
             elif meta_emb is None:
                 out = model(x_enc, x_mark)

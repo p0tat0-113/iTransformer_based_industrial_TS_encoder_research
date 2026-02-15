@@ -1,0 +1,88 @@
+plan_id: TUNE_TiDE_AB_lr3_rep4_e10
+
+runs:
+  - id_template: "TUNE-TDA.{dataset}.pl{pred_len}.lr{lr}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.seq_len=96
+      - data.label_len=48
+      - data.pred_len={pred_len}
+      - model=TiDE
+      - train=downstream
+      - train.mode=sl
+      - train.epochs=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.val_flag=test
+      - optim=adam
+      - optim.lr={lr}
+      - optim.scheduler=cosine
+      - optim.min_lr=0.0
+      - optim.t_max=0
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - model.use_norm=true
+      - model.d_model=256
+      - model.e_layers=2
+      - model.d_layers=2
+      - model.d_ff=128
+      - model.dropout=0.3
+      - model.tide.feature_encode_dim=2
+      - model.tide.decode_dim=8
+      - model.tide.bias=true
+      - run.code=TUNE-{dataset}
+      - run.hparams_tag=tide-A-e10-lr{lr}-pl{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1, Weather]
+      pred_len: [96, 720]
+      seed: [0]
+      lr: [0.00001, 0.00003, 0.0001]
+
+  - id_template: "TUNE-TDB.{dataset}.pl{pred_len}.lr{lr}.sd{seed}"
+    entry: downstream
+    overrides:
+      - data={dataset}
+      - data.seq_len=96
+      - data.label_len=48
+      - data.pred_len={pred_len}
+      - model=TiDE
+      - train=downstream
+      - train.mode=sl
+      - train.epochs=10
+      - train.batch_size=128
+      - train.patience=0
+      - train.val_flag=test
+      - optim=adam
+      - optim.lr={lr}
+      - optim.scheduler=cosine
+      - optim.min_lr=0.0
+      - optim.t_max=0
+      - metadata.enabled=false
+      - runtime.device=cuda
+      - runtime.seed={seed}
+      - runtime.deterministic=true
+      - model.use_norm=false
+      - model.d_model=512
+      - model.e_layers=1
+      - model.d_layers=1
+      - model.d_ff=16
+      - model.dropout=0.0
+      - model.tide.feature_encode_dim=2
+      - model.tide.decode_dim=8
+      - model.tide.bias=true
+      - run.code=TUNE-{dataset}
+      - run.hparams_tag=tide-B-e10-lr{lr}-pl{pred_len}
+      - run.id={id}
+    sweep:
+      dataset: [ETTh1, Weather]
+      pred_len: [96, 720]
+      seed: [0]
+      lr: [0.00001, 0.00003, 0.0001]
+
+ops: []
+cmps: []
+aggs: []

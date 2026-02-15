@@ -44,7 +44,8 @@ def _maybe_meta(cfg, dataset, device):
 
 
 def _predict(model, x_enc, x_mark, meta_emb, y_mark=None, *, use_tslib: bool = False):
-    if use_tslib:
+    needs_mark = bool(getattr(model, "needs_y_mark_dec", False))
+    if use_tslib or needs_mark:
         return model(x_enc, x_mark, meta_emb, y_mark_dec=y_mark)
     if meta_emb is None:
         return model(x_enc, x_mark)
